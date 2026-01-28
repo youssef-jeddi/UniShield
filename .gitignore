@@ -1,0 +1,66 @@
+# ==========================
+# OS & Editor files
+# ==========================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# ==========================
+# Environment & Secrets
+# ==========================
+.env
+.env.*
+*.local
+
+# ==========================
+# Frontend (Node.js / Vite)
+# ==========================
+node_modules/
+dist/
+dist-ssr/
+.vite/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ==========================
+# iApp (Python / iExec)
+# ==========================
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+eggs/
+*.egg-info/
+*.egg
+
+# iExec specific
+UniShield/iapp.config.json
+UniShield/input/
+UniShield/output/
+UniShield/cache/
+
+# ==========================
+# Solidity (Foundry)
+# ==========================
+solidity/cache/
+solidity/out/
+solidity/docs/
+
+# Foundry broadcast logs (keep important ones, ignore local/dry-run)
+solidity/broadcast/*/31337/
+solidity/broadcast/**/dry-run/
