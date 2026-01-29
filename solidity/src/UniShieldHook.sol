@@ -6,14 +6,9 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import {
-    BeforeSwapDelta,
-    BeforeSwapDeltaLibrary
-} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {
-    MessageHashUtils
-} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /**
  * @title UniShieldHook
@@ -61,12 +56,7 @@ contract UniShieldHook is IHooks {
      * @param r Signature component
      * @param s Signature component
      */
-    function registerKYC(
-        uint256 expiry,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external {
+    function registerKYC(uint256 expiry, uint8 v, bytes32 r, bytes32 s) external {
         // Check attestation hasn't already expired
         if (expiry <= block.timestamp) {
             revert ExpiredAttestation();
@@ -103,12 +93,7 @@ contract UniShieldHook is IHooks {
 
     // ============ Hook Implementation ============
 
-    function beforeSwap(
-        address sender,
-        PoolKey calldata,
-        IPoolManager.SwapParams calldata,
-        bytes calldata
-    )
+    function beforeSwap(address sender, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata)
         external
         view
         override
@@ -123,30 +108,7 @@ contract UniShieldHook is IHooks {
             revert KYCExpired();
         }
 
-        return (
-            IHooks.beforeSwap.selector,
-            BeforeSwapDeltaLibrary.ZERO_DELTA,
-            0
-        );
-    }
-
-    // ============ Unused Hooks (required by interface) ============
-
-    function beforeInitialize(
-        address,
-        PoolKey calldata,
-        uint160
-    ) external pure override returns (bytes4) {
-        return IHooks.beforeInitialize.selector;
-    }
-
-    function afterInitialize(
-        address,
-        PoolKey calldata,
-        uint160,
-        int24
-    ) external pure override returns (bytes4) {
-        return IHooks.afterInitialize.selector;
+        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
     function beforeAddLiquidity(
@@ -163,6 +125,16 @@ contract UniShieldHook is IHooks {
             revert KYCExpired();
         }
         return IHooks.beforeAddLiquidity.selector;
+    }
+
+    // ============ Unused Hooks (required by interface) ============
+
+    function beforeInitialize(address, PoolKey calldata, uint160) external pure override returns (bytes4) {
+        return IHooks.beforeInitialize.selector;
+    }
+
+    function afterInitialize(address, PoolKey calldata, uint160, int24) external pure override returns (bytes4) {
+        return IHooks.afterInitialize.selector;
     }
 
     function afterAddLiquidity(
@@ -196,33 +168,30 @@ contract UniShieldHook is IHooks {
         return (IHooks.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
     }
 
-    function afterSwap(
-        address,
-        PoolKey calldata,
-        IPoolManager.SwapParams calldata,
-        BalanceDelta,
-        bytes calldata
-    ) external pure override returns (bytes4, int128) {
+    function afterSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata)
+        external
+        pure
+        override
+        returns (bytes4, int128)
+    {
         return (IHooks.afterSwap.selector, 0);
     }
 
-    function beforeDonate(
-        address,
-        PoolKey calldata,
-        uint256,
-        uint256,
-        bytes calldata
-    ) external pure override returns (bytes4) {
+    function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
+        external
+        pure
+        override
+        returns (bytes4)
+    {
         return IHooks.beforeDonate.selector;
     }
 
-    function afterDonate(
-        address,
-        PoolKey calldata,
-        uint256,
-        uint256,
-        bytes calldata
-    ) external pure override returns (bytes4) {
+    function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
+        external
+        pure
+        override
+        returns (bytes4)
+    {
         return IHooks.afterDonate.selector;
     }
 }

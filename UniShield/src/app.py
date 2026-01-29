@@ -11,6 +11,9 @@ from web3 import Web3
 
 IEXEC_OUT = os.getenv('IEXEC_OUT')
 
+ACCEPTED_DOCUMENT_TYPES = ['passport', 'id_card', 'residence_permit']
+SANCTIONED_COUNTRIES = ['north korea', 'iran']
+
 # Attestation validity period (30 days in seconds, we can change it)
 ATTESTATION_VALIDITY_SECONDS = 30 * 24 * 60 * 60
 
@@ -46,10 +49,27 @@ try:
     # For now, always consider the user as verified
     is_kyc_valid = True
     
-    if not is_kyc_valid:
-        raise ValueError("KYC validation failed")
-        
-        
+    document_data = protected_data.getValue('document_data', 'file')
+    document_type = protected_data.getValue('document_type', 'string')
+    country = protected_data.getValue('country', 'string')
+    
+    print(f"Document type: {document_type}")
+    print(f"Country: {country}")
+    print(f"Document size: {len(document_data) if document_data else 0} bytes")
+    
+    # Check 1: Document exists and has content
+    if not document_data or len(document_data) < 1000:  # At least 1KB
+        raise ValueError("Invalid document: file is missing or too small")
+    
+    # Check 2: Document type is accepted
+    if document_type.lower() not in ACCEPTED_DOCUMENT_TYPES:
+        raise ValueError(f"Invalid document type: {document_type}. Accepted: {ACCEPTED_DOCUMENT_TYPES}")
+    
+    # Check 3: Country is not sanctioned
+    if country.lower() in SANCTIONED_COUNTRIES:
+        raise ValueError(f"Country is sanctioned: {country}")
+    
+    print("KYC validation passed!")
         
     ##### Retrieving the Signing Key from App Secret #####
     
