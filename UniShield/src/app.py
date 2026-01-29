@@ -17,19 +17,17 @@ ATTESTATION_VALIDITY_SECONDS = 30 * 24 * 60 * 60
 try:
 
     ##### Parsing the Inputs #####
-    # For me, there are only 2 arguments: user_address and pool_id
+    # Global KYC: only need user_address (no pool_id in signature)
     args = sys.argv[1:]
-    if len(args) < 2:
-        raise ValueError("Missing args: user_address, pool_id")
+    if len(args) < 1:
+        raise ValueError("Missing args: user_address")
         
     user_address = args[0]
-    pool_id = args[1]
     
     # Expiry is set by the TEE, not the user
     expiry_timestamp = int(time.time()) + ATTESTATION_VALIDITY_SECONDS
     
     print(f"User: {user_address}")
-    print(f"Pool: {pool_id}")
     print(f"Expiry: {expiry_timestamp}")
     
     
@@ -77,23 +75,17 @@ try:
     Create the hash that will be signed.
     It must match exactly what the solidity Hook reconstructs.
     
-    Solidity equivalent:
-    keccak256(abi.encodePacked(userAddress, poolId, expiry))
+    Global KYC - Solidity equivalent:
+    keccak256(abi.encodePacked(userAddress, expiry))
     """
     
     user_address = Web3.to_checksum_address(user_address)
     
-    
-    # pool_id is always bytes32 (Uniswap v4 PoolId format)
-    pool_id_clean = pool_id[2:] if pool_id.startswith('0x') else pool_id
-    pool_bytes = bytes.fromhex(pool_id_clean.zfill(64)) 
-        
-    
-    # equivalent of abi.encodePacked
+    # Global KYC: sign only userAddress + expiry (no poolId)
+    # This allows one KYC attestation to work for all pools
     packed = (
-        bytes.fromhex(user_address[2:]) +  # 20 bytes (address)
-        pool_bytes +                         # 32 bytes (bytes32)
-        expiry_timestamp.to_bytes(32, 'big')          # 32 bytes (uint256)
+        bytes.fromhex(user_address[2:]) +      # 20 bytes (address)
+        expiry_timestamp.to_bytes(32, 'big')   # 32 bytes (uint256)
     )
     
     
@@ -109,6 +101,7 @@ try:
     }
     
     print(f"Attestation signature generated successfully")
+    print(f"Signer address: {account.address}")
     
     
     ##### Writing the Output #####
@@ -116,14 +109,14 @@ try:
     result = {
             "success": True,
             "user_address": user_address,
-            "pool_id": pool_id,
             "expiry": expiry_timestamp,
             "signature": {
                 "r": signature['r'],
                 "s": signature['s'],
                 "v": signature['v']
             },
-            "message_hash": message_hash.hex()
+            "message_hash": message_hash.hex(),
+            "signer_address": account.address
         }
     
     

@@ -1,0 +1,3 @@
+[submodule "solidity/lib/v4-core"]
+	path = solidity/lib/v4-core
+	url = https://github.com/uniswap/v4-core
