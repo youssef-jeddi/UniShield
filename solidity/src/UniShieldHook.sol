@@ -150,11 +150,18 @@ contract UniShieldHook is IHooks {
     }
 
     function beforeAddLiquidity(
-        address,
+        address sender,
         PoolKey calldata,
         IPoolManager.ModifyLiquidityParams calldata,
         bytes calldata
-    ) external pure override returns (bytes4) {
+    ) external view override onlyPoolManager returns (bytes4) {
+        // Check if the sender has valid KYC
+        if (kycExpiry[sender] == 0) {
+            revert NotKYCd();
+        }
+        if (kycExpiry[sender] <= block.timestamp) {
+            revert KYCExpired();
+        }
         return IHooks.beforeAddLiquidity.selector;
     }
 

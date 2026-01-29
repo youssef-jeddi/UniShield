@@ -204,6 +204,87 @@ contract UniShieldHookTest is Test {
         );
     }
 
+    // ============ beforeAddLiquidity Tests ============
+
+    function test_BeforeAddLiquidity_KYCValid() public {
+        // Register valid KYC
+        uint256 expiry = block.timestamp + 30 days;
+        bytes32 messageHash = keccak256(abi.encodePacked(USER, expiry));
+        bytes32 ethSignedHash = _toEthSignedMessageHash(messageHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            SIGNER_PRIVATE_KEY,
+            ethSignedHash
+        );
+
+        vm.prank(USER);
+        hook.registerKYC(expiry, v, r, s);
+
+        // Call beforeAddLiquidity as pool manager
+        vm.prank(MOCK_POOL_MANAGER);
+        bytes4 selector = hook.beforeAddLiquidity(
+            USER,
+            _createMockPoolKey(),
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: -100,
+                tickUpper: 100,
+                liquidityDelta: 1e18,
+                salt: bytes32(0)
+            }),
+            ""
+        );
+
+        assertEq(selector, IHooks.beforeAddLiquidity.selector);
+    }
+
+    function test_BeforeAddLiquidity_NotKYCd() public {
+        // Don't register KYC, try to add liquidity
+        vm.prank(MOCK_POOL_MANAGER);
+        vm.expectRevert(UniShieldHook.NotKYCd.selector);
+        hook.beforeAddLiquidity(
+            USER,
+            _createMockPoolKey(),
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: -100,
+                tickUpper: 100,
+                liquidityDelta: 1e18,
+                salt: bytes32(0)
+            }),
+            ""
+        );
+    }
+
+    function test_BeforeAddLiquidity_KYCExpired() public {
+        // Register KYC that expires soon
+        uint256 expiry = block.timestamp + 1 hours;
+        bytes32 messageHash = keccak256(abi.encodePacked(USER, expiry));
+        bytes32 ethSignedHash = _toEthSignedMessageHash(messageHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            SIGNER_PRIVATE_KEY,
+            ethSignedHash
+        );
+
+        vm.prank(USER);
+        hook.registerKYC(expiry, v, r, s);
+
+        // Warp past expiry
+        vm.warp(expiry + 1);
+
+        // Try to add liquidity
+        vm.prank(MOCK_POOL_MANAGER);
+        vm.expectRevert(UniShieldHook.KYCExpired.selector);
+        hook.beforeAddLiquidity(
+            USER,
+            _createMockPoolKey(),
+            IPoolManager.ModifyLiquidityParams({
+                tickLower: -100,
+                tickUpper: 100,
+                liquidityDelta: 1e18,
+                salt: bytes32(0)
+            }),
+            ""
+        );
+    }
+
     // ============ Helper Functions ============
 
     function _toEthSignedMessageHash(
