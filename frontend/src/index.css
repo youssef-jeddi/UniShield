@@ -1,36 +1,258 @@
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #183ee9;
+  --color-primary: #3b82f6;
+  --color-primary-hover: #2563eb;
 }
 
-button,
+/* Base styles */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  @apply bg-slate-950 text-slate-100 antialiased;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+}
+
+/* Monospace for addresses and hashes */
+.font-mono {
+  font-family: "JetBrains Mono", "Fira Code", "SF Mono", Monaco, "Cascadia Code",
+    "Roboto Mono", monospace;
+}
+
+/* Primary Button */
+.btn-primary {
+  @apply rounded-lg inline-flex items-center justify-center gap-2 text-sm font-medium whitespace-nowrap transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:pointer-events-none disabled:opacity-50 bg-blue-600 text-white hover:bg-blue-500 h-11 min-w-[120px] px-6 py-3;
+}
+
+/* Secondary Button */
+.btn-secondary {
+  @apply rounded-lg inline-flex items-center justify-center gap-2 text-sm font-medium whitespace-nowrap transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-slate-500/50 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:pointer-events-none disabled:opacity-50 bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-slate-100 border border-slate-700 h-11 min-w-[120px] px-6 py-3;
+}
+
+/* Ghost Button */
+.btn-ghost {
+  @apply rounded-lg inline-flex items-center justify-center gap-2 text-sm font-medium whitespace-nowrap transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-slate-500/50 disabled:pointer-events-none disabled:opacity-50 text-slate-400 hover:text-slate-100 hover:bg-slate-800 h-9 px-4 py-2;
+}
+
+/* Success Button */
+.btn-success {
+  @apply rounded-lg inline-flex items-center justify-center gap-2 text-sm font-medium whitespace-nowrap transition-all duration-200 ease-out focus:outline-none focus:ring-2 focus:ring-emerald-500/50 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:pointer-events-none disabled:opacity-50 bg-emerald-600 text-white hover:bg-emerald-500 h-11 min-w-[120px] px-6 py-3;
+}
+
+/* Input styles */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+textarea {
+  @apply bg-slate-800 border border-slate-700 text-slate-100 rounded-lg px-4 py-3 w-full text-sm placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200;
+}
+
+/* Select styles */
+select {
+  @apply bg-slate-800 border border-slate-700 text-slate-300 rounded-lg px-4 py-3 w-full text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer appearance-none transition-all duration-200;
+  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%2364748b' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
+  background-position: right 0.75rem center;
+  background-repeat: no-repeat;
+  background-size: 1.25em 1.25em;
+  padding-right: 2.5rem;
+}
+
+select option {
+  @apply bg-slate-800 text-slate-300;
+}
+
+/* Card styles */
+.card {
+  @apply bg-slate-900 border border-slate-800 rounded-lg;
+}
+
+.card-header {
+  @apply px-6 py-4 border-b border-slate-800;
+}
+
+.card-body {
+  @apply p-6;
+}
+
+/* Badge styles */
+.badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+}
+
+.badge-success {
+  @apply bg-emerald-500/10 text-emerald-400 border border-emerald-500/20;
+}
+
+.badge-warning {
+  @apply bg-amber-500/10 text-amber-400 border border-amber-500/20;
+}
+
+.badge-error {
+  @apply bg-red-500/10 text-red-400 border border-red-500/20;
+}
+
+.badge-info {
+  @apply bg-blue-500/10 text-blue-400 border border-blue-500/20;
+}
+
+/* Spinner animation */
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Pulse animation for status indicators */
+@keyframes pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-slate-900;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-700 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-600;
+}
+
+/* Focus visible styles */
+*:focus-visible {
+  @apply outline-none ring-2 ring-blue-500/50 ring-offset-2 ring-offset-slate-900;
+}
+
+/* Link styles */
 a {
-  @apply cursor-pointer;
+  @apply text-blue-400 hover:text-blue-300 transition-colors;
 }
 
-button.primary,
-a.primary {
-  @apply rounded-lg inline-flex items-center justify-center gap-1.5 text-sm font-medium whitespace-nowrap transition-colors duration-300 ease-out focus-within:ring-primary/50 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-primary text-white hover:bg-primary/80 h-11 min-w-24 px-6 py-3;
+/* Table styles */
+table {
+  @apply w-full text-sm text-left;
 }
 
-button.secondary,
-a.secondary {
-  @apply rounded-lg inline-flex items-center justify-center gap-1.5 text-sm font-medium whitespace-nowrap transition-colors duration-300 ease-out focus-within:ring-primary/50 focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none disabled:pointer-events-none disabled:opacity-50 bg-gray-800 text-white hover:bg-gray-700 h-11 min-w-24 px-6 py-3;
+thead {
+  @apply text-xs text-slate-500 uppercase tracking-wider border-b border-slate-800;
 }
 
-input {
-  @apply file:text-gray-50 placeholder:text-gray-300 selection:bg-primary selection:text-gray-900 border-gray-800 flex h-9 w-full min-w-0 rounded-md border bg-transparent px-3 py-1 text-base shadow-xs transition-[color,box-shadow] outline-none file:inline-flex file:h-7 file:border-0 file:bg-transparent file:text-sm file:font-medium disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 md:text-sm;
-  @apply focus-visible:border-gray-800 focus-visible:ring-primary/50 focus-visible:ring-[3px];
-  @apply aria-invalid:ring-red-500/20 dark:aria-invalid:ring-red-500/40 aria-invalid:border-red-500;
+th {
+  @apply px-4 py-3 font-medium;
 }
 
-select,
-.chain-selector {
-  @apply border-gray-800 pr-8 flex h-9 min-w-0 rounded-md border bg-white px-3 py-1 text-sm shadow-xs transition-[color,box-shadow] outline-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50;
-  @apply focus-visible:border-gray-800 focus-visible:ring-primary/50 focus-visible:ring-[3px];
-  @apply cursor-pointer appearance-none bg-no-repeat;
-  background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='m6 8 4 4 4-4'/%3e%3c/svg%3e");
-  background-position: right 0.5rem center;
-  background-size: 1.5em 1.5em;
+td {
+  @apply px-4 py-3 border-b border-slate-800/50;
+}
+
+tbody tr {
+  @apply hover:bg-slate-800/30 transition-colors;
+}
+
+/* Tooltip styles */
+[data-tooltip] {
+  @apply relative;
+}
+
+[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  @apply absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 text-xs text-slate-100 bg-slate-800 rounded whitespace-nowrap z-50;
+}
+
+/* Status indicator dot */
+.status-dot {
+  @apply w-2 h-2 rounded-full;
+}
+
+.status-dot-success {
+  @apply bg-emerald-500;
+}
+
+.status-dot-warning {
+  @apply bg-amber-500;
+}
+
+.status-dot-error {
+  @apply bg-red-500;
+}
+
+.status-dot-info {
+  @apply bg-blue-500;
+}
+
+/* Glass effect */
+.glass {
+  @apply bg-slate-900/50 backdrop-blur-sm;
+}
+
+/* Gradient text */
+.gradient-text {
+  @apply bg-gradient-to-r from-blue-400 to-emerald-400 bg-clip-text text-transparent;
+}
+
+/* Divider */
+.divider {
+  @apply border-t border-slate-800 my-6;
+}
+
+/* Loading skeleton */
+.skeleton {
+  @apply bg-slate-800 rounded animate-pulse;
+}
+
+/* File upload hover state */
+.file-upload-zone {
+  @apply border-2 border-dashed border-slate-700 rounded-lg p-8 text-center cursor-pointer transition-all duration-200 hover:border-slate-600 hover:bg-slate-800/30;
+}
+
+.file-upload-zone.active {
+  @apply border-blue-500 bg-blue-500/5;
+}
+
+.file-upload-zone.success {
+  @apply border-emerald-500/50 bg-emerald-500/5;
+}
+
+/* Transition utilities */
+.transition-base {
+  @apply transition-all duration-200 ease-out;
+}
+
+/* Shadow utilities */
+.shadow-glow {
+  box-shadow: 0 0 20px rgba(59, 130, 246, 0.15);
+}
+
+.shadow-glow-success {
+  box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);
 }
