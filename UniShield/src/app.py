@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import time
 import protected_data
 from eth_account import Account
 from eth_account.messages import encode_defunct
@@ -10,57 +11,45 @@ from web3 import Web3
 
 IEXEC_OUT = os.getenv('IEXEC_OUT')
 
-#computed_json = {}
+# Attestation validity period (30 days in seconds, we can change it)
+ATTESTATION_VALIDITY_SECONDS = 30 * 24 * 60 * 60
 
 try:
-    #messages = []
 
     ##### Parsing the Inputs #####
+    # For me, there are only 2 arguments: user_address and pool_id
     args = sys.argv[1:]
-    if len(args) < 3:
-        raise ValueError("Missing args: user_address, pool_id, expiry_timestamp")
+    if len(args) < 2:
+        raise ValueError("Missing args: user_address, pool_id")
         
     user_address = args[0]
     pool_id = args[1]
-    expiry_timestamp = int(args[2])
+    
+    # Expiry is set by the TEE, not the user
+    expiry_timestamp = int(time.time()) + ATTESTATION_VALIDITY_SECONDS
     
     print(f"User: {user_address}")
     print(f"Pool: {pool_id}")
     print(f"Expiry: {expiry_timestamp}")
     
     
-    ##### Loading and Validating the Protected Data : the KYC Step #####
+    ##### KYC Validation Step #####
     
     """
-    We need to decide on the structure of the protected data, then 
-    the frontend should call protectData() with that structure.
+    TODO: Implement real KYC validation using protected data.
+    For now, we assume the user is always verified.
     
-    I propose something like this : 
-    
-    {
-        document_data: "base64_encoded_file_or_hash",
-        document_type: "passport", OR "bank_certification" OR any other official document
-        is_verified: true  // For hackathon mock
-    }
-    
-    Each field becomes accessible via protected_data.getValue()
+    Future implementation will use:
+    - document_data = protected_data.getValue('document_data', 'file')
+    - document_type = protected_data.getValue('document_type', 'string')
+    - is_verified = protected_data.getValue("is_verified", 'bool')
     """
-
-    try:
-        document_data = protected_data.getValue('document_data', 'file')
-        document_type = protected_data.getValue('document_type', 'string')
-        is_verified = protected_data.getValue("is_verified", bool)
-        
-        # Here we need to decide how we will perform the KYC checks
-        # For now, I just put a trivial check and return the result in a dict 
-        if is_verified and document_type == "passport" and document_data:
-            validation_result = {'is_valid': True}
-        else :
-            validation_result = {'is_valid': False}
     
-        
-    except Exception as e:
-        print('It seems there is an issue with your protected data:', e)
+    # For now, always consider the user as verified
+    is_kyc_valid = True
+    
+    if not is_kyc_valid:
+        raise ValueError("KYC validation failed")
         
         
         
@@ -69,8 +58,7 @@ try:
     
     # we need to add an app secret field to the iapp.config.json
     # Iapp will then retrieve that key only in the enclave, keeping it private
-    
-    
+    # IEXEC_APP_DEVELOPER_SECRET is the app secret, it's set in the iapp.config.json which is "private"
     
     
     app_secret = os.getenv("IEXEC_APP_DEVELOPER_SECRET")
@@ -96,12 +84,9 @@ try:
     user_address = Web3.to_checksum_address(user_address)
     
     
-    # Handle pool_id - could be an address or bytes32
-    if len(pool_id) == 42:  # Address format
-        pool_bytes = bytes.fromhex(user_address[2:]).rjust(32, b'\x00')
-    else:  # bytes32
-        pool_id_clean = pool_id[2:] if pool_id.startswith('0x') else pool_id
-        pool_bytes = bytes.fromhex(pool_id_clean.zfill(64)) 
+    # pool_id is always bytes32 (Uniswap v4 PoolId format)
+    pool_id_clean = pool_id[2:] if pool_id.startswith('0x') else pool_id
+    pool_bytes = bytes.fromhex(pool_id_clean.zfill(64)) 
         
     
     # equivalent of abi.encodePacked
