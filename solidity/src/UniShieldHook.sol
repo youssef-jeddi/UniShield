@@ -1,52 +1,79 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
+import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 
 /**
  * @title UniShieldHook
  * @notice Uniswap v4 Hook that enforces KYC verification before allowing swaps
  * @dev Users must register their KYC attestation (signed by a trusted TEE) before trading
  */
-contract UniShieldHook is IHooks {
-    using PoolIdLibrary for PoolKey;
+contract UniShieldHook is BaseHook {
     using ECDSA for bytes32;
     using MessageHashUtils for bytes32;
 
-    /// @notice The pool manager
-    IPoolManager public immutable poolManager;
-
     /// @notice The trusted signer address (derived from TEE's signing key)
     address public immutable trustedSigner;
+
+    /// @notice Contract owner for admin functions
+    address public owner;
 
     /// @notice Mapping of user address to their KYC expiry timestamp
     /// @dev If kycExpiry[user] > block.timestamp, the user is KYC'd
     mapping(address => uint256) public kycExpiry;
 
+    /// @notice Used signatures to prevent replay attacks
+    mapping(bytes32 => bool) public usedSignatures;
+
     /// @notice Emitted when a user successfully registers their KYC
     event KYCRegistered(address indexed user, uint256 expiry);
+    event KYCRevoked(address indexed user);
 
     error NotKYCd();
     error KYCExpired();
     error InvalidSignature();
     error ExpiredAttestation();
     error OnlyPoolManager();
+    error OnlyOwner();
+    error SignatureAlreadyUsed();
 
-    modifier onlyPoolManager() {
-        if (msg.sender != address(poolManager)) revert OnlyPoolManager();
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert OnlyOwner();
         _;
     }
 
-    constructor(IPoolManager _poolManager, address _trustedSigner) {
-        poolManager = _poolManager;
+    constructor(IPoolManager _poolManager, address _trustedSigner) BaseHook(_poolManager) {
+        owner = msg.sender;
         trustedSigner = _trustedSigner;
+    }
+
+    /// @notice Define which hook functions this contract implements
+    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
+        return Hooks.Permissions({
+            beforeInitialize: false,
+            afterInitialize: false,
+            beforeAddLiquidity: true, // Check KYC before adding liquidity
+            afterAddLiquidity: false,
+            beforeRemoveLiquidity: false, // Allow anyone to remove (they already passed KYC to add)
+            afterRemoveLiquidity: false,
+            beforeSwap: true, // Check KYC before swapping
+            afterSwap: false,
+            beforeDonate: false,
+            afterDonate: false,
+            beforeSwapReturnDelta: false,
+            afterSwapReturnDelta: false,
+            afterAddLiquidityReturnDelta: false,
+            afterRemoveLiquidityReturnDelta: false
+        });
     }
 
     /**
@@ -60,6 +87,12 @@ contract UniShieldHook is IHooks {
         // Check attestation hasn't already expired
         if (expiry <= block.timestamp) {
             revert ExpiredAttestation();
+        }
+
+        // Create signature hash for replay protection
+        bytes32 sigHash = keccak256(abi.encodePacked(r, s, v));
+        if (usedSignatures[sigHash]) {
+            revert SignatureAlreadyUsed();
         }
 
         // Reconstruct the message hash that the TEE signed
@@ -76,6 +109,9 @@ contract UniShieldHook is IHooks {
             revert InvalidSignature();
         }
 
+        // Mark signature as used
+        usedSignatures[sigHash] = true;
+
         // Store the KYC expiry
         kycExpiry[msg.sender] = expiry;
 
@@ -91,13 +127,21 @@ contract UniShieldHook is IHooks {
         return kycExpiry[user] > block.timestamp;
     }
 
+    /**
+     * @notice Revoke a user's KYC (emergency compliance action)
+     * @param user The user to revoke
+     */
+    function revokeKYC(address user) external onlyOwner {
+        kycExpiry[user] = 0;
+        emit KYCRevoked(user);
+    }
+
     // ============ Hook Implementation ============
 
-    function beforeSwap(address sender, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata)
-        external
+    function _beforeSwap(address sender, PoolKey calldata, SwapParams calldata, bytes calldata)
+        internal
         view
         override
-        onlyPoolManager
         returns (bytes4, BeforeSwapDelta, uint24)
     {
         // Check if the sender has valid KYC
@@ -108,15 +152,15 @@ contract UniShieldHook is IHooks {
             revert KYCExpired();
         }
 
-        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
+        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
-    function beforeAddLiquidity(
-        address sender,
-        PoolKey calldata,
-        IPoolManager.ModifyLiquidityParams calldata,
-        bytes calldata
-    ) external view override onlyPoolManager returns (bytes4) {
+    function _beforeAddLiquidity(address sender, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
+        internal
+        view
+        override
+        returns (bytes4)
+    {
         // Check if the sender has valid KYC
         if (kycExpiry[sender] == 0) {
             revert NotKYCd();
@@ -124,74 +168,6 @@ contract UniShieldHook is IHooks {
         if (kycExpiry[sender] <= block.timestamp) {
             revert KYCExpired();
         }
-        return IHooks.beforeAddLiquidity.selector;
-    }
-
-    // ============ Unused Hooks (required by interface) ============
-
-    function beforeInitialize(address, PoolKey calldata, uint160) external pure override returns (bytes4) {
-        return IHooks.beforeInitialize.selector;
-    }
-
-    function afterInitialize(address, PoolKey calldata, uint160, int24) external pure override returns (bytes4) {
-        return IHooks.afterInitialize.selector;
-    }
-
-    function afterAddLiquidity(
-        address,
-        PoolKey calldata,
-        IPoolManager.ModifyLiquidityParams calldata,
-        BalanceDelta,
-        BalanceDelta,
-        bytes calldata
-    ) external pure override returns (bytes4, BalanceDelta) {
-        return (IHooks.afterAddLiquidity.selector, BalanceDelta.wrap(0));
-    }
-
-    function beforeRemoveLiquidity(
-        address,
-        PoolKey calldata,
-        IPoolManager.ModifyLiquidityParams calldata,
-        bytes calldata
-    ) external pure override returns (bytes4) {
-        return IHooks.beforeRemoveLiquidity.selector;
-    }
-
-    function afterRemoveLiquidity(
-        address,
-        PoolKey calldata,
-        IPoolManager.ModifyLiquidityParams calldata,
-        BalanceDelta,
-        BalanceDelta,
-        bytes calldata
-    ) external pure override returns (bytes4, BalanceDelta) {
-        return (IHooks.afterRemoveLiquidity.selector, BalanceDelta.wrap(0));
-    }
-
-    function afterSwap(address, PoolKey calldata, IPoolManager.SwapParams calldata, BalanceDelta, bytes calldata)
-        external
-        pure
-        override
-        returns (bytes4, int128)
-    {
-        return (IHooks.afterSwap.selector, 0);
-    }
-
-    function beforeDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
-        external
-        pure
-        override
-        returns (bytes4)
-    {
-        return IHooks.beforeDonate.selector;
-    }
-
-    function afterDonate(address, PoolKey calldata, uint256, uint256, bytes calldata)
-        external
-        pure
-        override
-        returns (bytes4)
-    {
-        return IHooks.afterDonate.selector;
+        return BaseHook.beforeAddLiquidity.selector;
     }
 }

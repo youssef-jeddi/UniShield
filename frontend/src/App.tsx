@@ -8,11 +8,20 @@ import {
   type GetResultFromCompletedTaskParams,
   type ProtectedData,
 } from "@iexec/dataprotector";
+import { ethers } from "ethers";
 import { supportedChains } from "./config/privyConfig";
 import { normalizeChainId } from "./utils/normalizeChainId";
 import KYCVerification from "./components/KYCVerification";
 import PoolStatus from "./components/PoolStatus";
 import Header from "./components/Header";
+import { POOL_MANAGER_ADDRESS, POOL_MODIFY_ROUTER_ADDRESS, CLEANPOOL_HOOK_ADDRESS, TOKEN_A_ADDRESS, TOKEN_B_ADDRESS, POOL_FEE, TICK_SPACING } from './config/contract';
+
+// Hook ABI (only the functions we need)
+const HOOK_ABI = [
+  "function registerKYC(uint256 expiry, uint8 v, bytes32 r, bytes32 s) external",
+  "function isKYCValid(address user) view returns (bool)",
+  "function kycExpiry(address user) view returns (uint256)",
+];
 
 // Verification state machine
 export type VerificationStatus =
@@ -82,6 +91,7 @@ export default function App() {
 
   // iApp address (replace with your deployed iApp address)
   const IAPP_ADDRESS = "0xe4651C6F9354debbfFF077E1E64b5A6cA00B615D";
+
 
   const networks = supportedChains;
 
@@ -268,25 +278,68 @@ export default function App() {
     }
   };
 
-  // Deposit liquidity with attestation
+  // Register KYC on-chain
+  const registerKYCOnChain = async (
+    attestation: AttestationResult,
+    signer: ethers.Signer
+  ): Promise<boolean> => {
+    const hook = new ethers.Contract(
+      CLEANPOOL_HOOK_ADDRESS,
+      HOOK_ABI,
+      signer
+    );
+
+    // Check if already registered and still valid
+    const userAddress = await signer.getAddress();
+    const isValid = await hook.isKYCValid(userAddress);
+
+    if (isValid) {
+      console.log("Already KYC registered on-chain, skipping...");
+      return true;
+    }
+
+    console.log("Registering KYC on-chain...");
+    console.log("Attestation:", {
+      expiry: attestation.expiry,
+      v: attestation.signature.v,
+      r: attestation.signature.r,
+      s: attestation.signature.s,
+    });
+
+    const tx = await hook.registerKYC(
+      attestation.expiry,
+      attestation.signature.v,
+      attestation.signature.r,
+      attestation.signature.s
+    );
+
+    await tx.wait();
+    console.log("KYC registered on-chain!");
+    return true;
+  };
+
+  // Deposit liquidity with attestation (two-step process)
   const depositLiquidity = async () => {
-    if (!attestation) return;
+    if (!attestation || !wallet) return;
 
     setVerificationStatus("DEPOSITING");
-    setStatusMessage("Submitting to liquidity pool...");
+    setStatusMessage("Preparing transaction...");
 
     try {
-      // TODO: Implement actual Uniswap v4 deposit
-      // const hookData = ethers.utils.defaultAbiCoder.encode(
-      //   ["bytes32", "bytes32", "uint8", "uint256"],
-      //   [attestation.signature.r, attestation.signature.s, attestation.signature.v, attestation.expiry]
-      // );
-      // await poolManager.modifyLiquidity(..., hookData);
+      const provider = await wallet.getEthereumProvider();
+      const ethersProvider = new ethers.BrowserProvider(provider);
+      const signer = await ethersProvider.getSigner();
 
-      await new Promise((resolve) => setTimeout(resolve, 2000));
+      // Step 1: Register KYC on-chain (if not already registered)
+      setStatusMessage("Registering KYC on-chain...");
+      await registerKYCOnChain(attestation, signer);
+
+      // Step 2: For hackathon demo, we just show KYC registration success
+      // In production, you would call addLiquidity on a router contract here
+      // The hook's beforeAddLiquidity will check kycExpiry[sender] automatically
 
       setVerificationStatus("COMPLETED");
-      setStatusMessage("Liquidity deposited successfully!");
+      setStatusMessage("KYC registered! You can now add liquidity to the pool.");
 
     } catch (err: any) {
       console.error("Deposit error:", err);

@@ -1,15 +1,20 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test, console} from "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {UniShieldHook} from "../src/UniShieldHook.sol";
 import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
+import {PoolManager} from "@uniswap/v4-core/src/PoolManager.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {Currency} from "@uniswap/v4-core/src/types/Currency.sol";
 import {IHooks} from "@uniswap/v4-core/src/interfaces/IHooks.sol";
+import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
+import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
 contract UniShieldHookTest is Test {
     UniShieldHook public hook;
+    IPoolManager public manager;
 
     // Test signer (Hardhat account #0)
     uint256 constant SIGNER_PRIVATE_KEY =
@@ -20,14 +25,25 @@ contract UniShieldHookTest is Test {
     // Test user (Hardhat account #1)
     address constant USER = 0x70997970C51812dc3A010C7d01b50e0d17dc79C8;
 
-    // Mock pool manager
-    address constant MOCK_POOL_MANAGER = address(0x1234);
-
     function setUp() public {
-        hook = new UniShieldHook(
-            IPoolManager(MOCK_POOL_MANAGER),
-            TRUSTED_SIGNER
+        // Deploy real PoolManager
+        manager = new PoolManager(address(this));
+
+        // Calculate the flags for our hook (beforeSwap + beforeAddLiquidity)
+        uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG);
+
+        // Mine for a valid hook address
+        bytes memory constructorArgs = abi.encode(manager, TRUSTED_SIGNER);
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            address(this),
+            flags,
+            type(UniShieldHook).creationCode,
+            constructorArgs
         );
+
+        // Deploy the hook at the mined address using CREATE2
+        hook = new UniShieldHook{salt: salt}(manager, TRUSTED_SIGNER);
+        require(address(hook) == hookAddress, "Hook address mismatch");
     }
 
     function test_RegisterKYC_ValidSignature() public {
@@ -105,6 +121,25 @@ contract UniShieldHookTest is Test {
         hook.registerKYC(expiry, v, r, s);
     }
 
+    function test_RegisterKYC_SignatureReplay() public {
+        // Arrange - register KYC once
+        uint256 expiry = block.timestamp + 30 days;
+        bytes32 messageHash = keccak256(abi.encodePacked(USER, expiry));
+        bytes32 ethSignedHash = _toEthSignedMessageHash(messageHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            SIGNER_PRIVATE_KEY,
+            ethSignedHash
+        );
+
+        vm.prank(USER);
+        hook.registerKYC(expiry, v, r, s);
+
+        // Act & Assert - try to use the same signature again
+        vm.prank(USER);
+        vm.expectRevert(UniShieldHook.SignatureAlreadyUsed.selector);
+        hook.registerKYC(expiry, v, r, s);
+    }
+
     function test_IsKYCValid_NotRegistered() public view {
         assertFalse(hook.isKYCValid(USER));
     }
@@ -128,6 +163,32 @@ contract UniShieldHookTest is Test {
         assertFalse(hook.isKYCValid(USER));
     }
 
+    function test_RevokeKYC() public {
+        // First register valid KYC
+        uint256 expiry = block.timestamp + 30 days;
+        bytes32 messageHash = keccak256(abi.encodePacked(USER, expiry));
+        bytes32 ethSignedHash = _toEthSignedMessageHash(messageHash);
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(
+            SIGNER_PRIVATE_KEY,
+            ethSignedHash
+        );
+
+        vm.prank(USER);
+        hook.registerKYC(expiry, v, r, s);
+        assertTrue(hook.isKYCValid(USER));
+
+        // Revoke KYC (called by owner - this test contract)
+        hook.revokeKYC(USER);
+        assertFalse(hook.isKYCValid(USER));
+    }
+
+    function test_RevokeKYC_OnlyOwner() public {
+        // Try to revoke as non-owner
+        vm.prank(USER);
+        vm.expectRevert(UniShieldHook.OnlyOwner.selector);
+        hook.revokeKYC(USER);
+    }
+
     function test_BeforeSwap_KYCValid() public {
         // Register valid KYC
         uint256 expiry = block.timestamp + 30 days;
@@ -142,11 +203,11 @@ contract UniShieldHookTest is Test {
         hook.registerKYC(expiry, v, r, s);
 
         // Call beforeSwap as pool manager
-        vm.prank(MOCK_POOL_MANAGER);
+        vm.prank(address(manager));
         (bytes4 selector, , ) = hook.beforeSwap(
             USER,
             _createMockPoolKey(),
-            IPoolManager.SwapParams({
+            SwapParams({
                 zeroForOne: true,
                 amountSpecified: 1e18,
                 sqrtPriceLimitX96: 0
@@ -159,12 +220,12 @@ contract UniShieldHookTest is Test {
 
     function test_BeforeSwap_NotKYCd() public {
         // Don't register KYC, try to swap
-        vm.prank(MOCK_POOL_MANAGER);
+        vm.prank(address(manager));
         vm.expectRevert(UniShieldHook.NotKYCd.selector);
         hook.beforeSwap(
             USER,
             _createMockPoolKey(),
-            IPoolManager.SwapParams({
+            SwapParams({
                 zeroForOne: true,
                 amountSpecified: 1e18,
                 sqrtPriceLimitX96: 0
@@ -190,12 +251,12 @@ contract UniShieldHookTest is Test {
         vm.warp(expiry + 1);
 
         // Try to swap
-        vm.prank(MOCK_POOL_MANAGER);
+        vm.prank(address(manager));
         vm.expectRevert(UniShieldHook.KYCExpired.selector);
         hook.beforeSwap(
             USER,
             _createMockPoolKey(),
-            IPoolManager.SwapParams({
+            SwapParams({
                 zeroForOne: true,
                 amountSpecified: 1e18,
                 sqrtPriceLimitX96: 0
@@ -220,11 +281,11 @@ contract UniShieldHookTest is Test {
         hook.registerKYC(expiry, v, r, s);
 
         // Call beforeAddLiquidity as pool manager
-        vm.prank(MOCK_POOL_MANAGER);
+        vm.prank(address(manager));
         bytes4 selector = hook.beforeAddLiquidity(
             USER,
             _createMockPoolKey(),
-            IPoolManager.ModifyLiquidityParams({
+            ModifyLiquidityParams({
                 tickLower: -100,
                 tickUpper: 100,
                 liquidityDelta: 1e18,
@@ -238,12 +299,12 @@ contract UniShieldHookTest is Test {
 
     function test_BeforeAddLiquidity_NotKYCd() public {
         // Don't register KYC, try to add liquidity
-        vm.prank(MOCK_POOL_MANAGER);
+        vm.prank(address(manager));
         vm.expectRevert(UniShieldHook.NotKYCd.selector);
         hook.beforeAddLiquidity(
             USER,
             _createMockPoolKey(),
-            IPoolManager.ModifyLiquidityParams({
+            ModifyLiquidityParams({
                 tickLower: -100,
                 tickUpper: 100,
                 liquidityDelta: 1e18,
@@ -270,12 +331,12 @@ contract UniShieldHookTest is Test {
         vm.warp(expiry + 1);
 
         // Try to add liquidity
-        vm.prank(MOCK_POOL_MANAGER);
+        vm.prank(address(manager));
         vm.expectRevert(UniShieldHook.KYCExpired.selector);
         hook.beforeAddLiquidity(
             USER,
             _createMockPoolKey(),
-            IPoolManager.ModifyLiquidityParams({
+            ModifyLiquidityParams({
                 tickLower: -100,
                 tickUpper: 100,
                 liquidityDelta: 1e18,
@@ -296,14 +357,14 @@ contract UniShieldHookTest is Test {
             );
     }
 
-    function _createMockPoolKey() internal pure returns (PoolKey memory) {
+    function _createMockPoolKey() internal view returns (PoolKey memory) {
         return
             PoolKey({
                 currency0: Currency.wrap(address(0x1)),
                 currency1: Currency.wrap(address(0x2)),
                 fee: 3000,
                 tickSpacing: 60,
-                hooks: IHooks(address(0))
+                hooks: IHooks(address(hook))
             });
     }
 }
