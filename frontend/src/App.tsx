@@ -5,6 +5,7 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 import {
   IExecDataProtector,
   IExecDataProtectorCore,
+  type GetResultFromCompletedTaskParams,
   type ProtectedData,
 } from "@iexec/dataprotector";
 import { supportedChains } from "./config/privyConfig";
@@ -80,7 +81,7 @@ export default function App() {
   const [error, setError] = useState<string>("");
 
   // iApp address (replace with your deployed iApp address)
-  const IAPP_ADDRESS = "0xb54482aee1343ef69eb1ade87085ae164e920986";     //// CHANGE THIS
+  const IAPP_ADDRESS = "0xe4651C6F9354debbfFF077E1E64b5A6cA00B615D";
 
   const networks = supportedChains;
 
@@ -193,31 +194,69 @@ export default function App() {
       setVerificationStatus("VERIFYING_TEE");
       setStatusMessage("Analyzing in Secure Enclave... This may take 30-60 seconds.");
 
-      // TODO: Replace with actual iExec task execution
-      // const result = await dataProtectorCore.processProtectedData({
-      //   protectedData: protectedData.address,
-      //   app: IAPP_ADDRESS,
-      //   args: address,
-      //   workerpool: "prod-v8-bellecour.main.pools.iexec.eth",
-      // });
+      console.log(protectedData.address)
+      console.log(IAPP_ADDRESS)
+      console.log(address)
+
+      // iExec task execution
+      const result = await dataProtectorCore.processProtectedData({
+        protectedData: protectedData.address,
+        app: IAPP_ADDRESS,
+        args: address,
+        dataMaxPrice: Number.MAX_SAFE_INTEGER,
+        appMaxPrice: Number.MAX_SAFE_INTEGER,
+        workerpoolMaxPrice: Number.MAX_SAFE_INTEGER,
+        onStatusUpdate: ({ title, isDone }) => {
+          console.log(`TEE Status: ${title}, Done: ${isDone}`);
+          setStatusMessage(title);
+        },
+      });
 
       // Mock TEE response for development
-      await new Promise((resolve) => setTimeout(resolve, 3000));
+      //await new Promise((resolve) => setTimeout(resolve, 3000));
 
-      const mockAttestation: AttestationResult = {
-        success: true,
-        user_address: address,
-        expiry: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
-        signature: {
-          r: "0x" + "a".repeat(64),
-          s: "0x" + "b".repeat(64),
-          v: 27,
+      //const mockAttestation: AttestationResult = {
+      //  success: true,
+      //  user_address: address,
+      //  expiry: Math.floor(Date.now() / 1000) + 30 * 24 * 60 * 60,
+      //  signature: {
+      //    r: "0x" + "a".repeat(64),
+      //    s: "0x" + "b".repeat(64),
+      //    v: 27,
+      //  },
+      //  message_hash: "0x" + "c".repeat(64),
+      //  signer_address: "0xTEESignerAddress",
+      //};
+
+      console.log("Process Response:", result);
+      // processResponse = { txHash, dealId, taskId, result }
+
+      // Get the actual result from the completed task
+      // The result is a ZIP file, we need to extract result.json
+      const completedTaskResult = await dataProtectorCore.getResultFromCompletedTask({
+        taskId: result.taskId,
+        path: "result.json",  // Path to extract from the ZIP
+        onStatusUpdate: ({ title, isDone }) => {
+          console.log(`Result fetch: ${title}, Done: ${isDone}`);
         },
-        message_hash: "0x" + "c".repeat(64),
-        signer_address: "0xTEESignerAddress",
-      };
+      });
 
-      setAttestation(mockAttestation);
+      // The result is inside completedTaskResult.result
+      const resultBuffer = completedTaskResult.result;
+
+
+      // Parse the result
+      const resultText = new TextDecoder().decode(resultBuffer);
+      const teeOutput: AttestationResult = JSON.parse(resultText);
+
+      console.log("TEE Output:", teeOutput);
+
+      // Validate the response
+      if (!teeOutput.success) {
+        throw new Error(teeOutput.error || "TEE verification failed");
+      }
+
+      setAttestation(teeOutput);
       setVerificationStatus("VERIFIED");
       setStatusMessage("KYC verification complete!");
 

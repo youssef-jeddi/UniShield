@@ -31,6 +31,9 @@ const COUNTRIES = [
     { value: "canada", label: "Canada" },
     { value: "australia", label: "Australia" },
     { value: "netherlands", label: "Netherlands" },
+    { value: "north korea", label: "North Korea" },
+    { value: "iran", label: "Iran" }
+
     // Add more countries as needed
 ];
 
