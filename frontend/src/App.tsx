@@ -10,14 +10,14 @@ import { ethers } from "ethers";
 import { supportedChains, SEPOLIA_CHAIN_ID, ARBITRUM_SEPOLIA_CHAIN_ID } from "./config/privyConfig";
 import { normalizeChainId } from "./utils/normalizeChainId";
 import KYCVerification, { type DepositAmounts } from "./components/KYCVerification";
-import PoolStatus from "./components/PoolStatus";
+import PoolsPage from "./components/PoolsPage";
+import CompliancePage from "./components/CompliancePage";
+import GovernancePage from "./components/GovernancePage";
 import Header from "./components/Header";
 import {
   POOL_MANAGER_ADDRESS,
   POOL_MODIFY_ROUTER_ADDRESS,
   CLEANPOOL_HOOK_ADDRESS,
-  TOKEN_A_ADDRESS,
-  TOKEN_B_ADDRESS,
   POOL_FEE,
   TICK_SPACING,
   ERC20_ABI,
@@ -109,6 +109,10 @@ export default function App() {
   // On-chain KYC status
   const [isKYCRegistered, setIsKYCRegistered] = useState<boolean>(false);
   const [kycExpiryDate, setKycExpiryDate] = useState<Date | null>(null);
+
+  // Navigation state
+  type PageType = 'dashboard' | 'pools' | 'compliance' | 'governance';
+  const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
 
   // iApp address (replace with your deployed iApp address)
   const IAPP_ADDRESS = "0xe4651C6F9354debbfFF077E1E64b5A6cA00B615D";
@@ -601,151 +605,112 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="min-h-screen bg-[#10221a] text-white flex flex-col">
       <Header
         isConnected={isConnected}
         address={address}
         chainId={chainId}
         networks={networks}
+        isKYCRegistered={isKYCRegistered}
+        currentPage={currentPage}
+        onPageChange={setCurrentPage}
         onLogin={handleLogin}
         onLogout={handleLogout}
         onChainChange={handleChainChange}
       />
 
-      <main className="max-w-7xl mx-auto px-6 py-8">
-        {/* Pool Status Banner */}
-        <PoolStatus />
-
-        {/* Main Content */}
-        {!isConnected ? (
-          <div className="flex flex-col items-center justify-center py-24">
-            <div className="bg-slate-900 border border-slate-800 rounded-lg p-12 text-center max-w-md">
-              <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-6">
-                <svg
-                  className="w-8 h-8 text-slate-400"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"
-                  />
-                </svg>
+      <main className="flex-1 px-6 lg:px-10 py-8 crypto-grid">
+        <div className="max-w-[1200px] mx-auto">
+          {/* Render page based on navigation */}
+          {currentPage === 'pools' ? (
+            <PoolsPage />
+          ) : currentPage === 'compliance' ? (
+            <CompliancePage />
+          ) : currentPage === 'governance' ? (
+            <GovernancePage />
+          ) : (
+            <>
+              {/* Dashboard / KYC Page */}
+              {/* Breadcrumbs */}
+              <div className="flex flex-wrap gap-2 pb-4">
+                <span className="text-[#92c9b2] text-sm font-medium">Dashboard</span>
+                <span className="text-[#92c9b2] text-sm font-medium">/</span>
+                <span className="text-white text-sm font-medium">
+                  {isKYCRegistered || verificationStatus === "KYC_REGISTERED" ? "Add Liquidity" : "Compliance Onboarding"}
+                </span>
               </div>
-              <h2 className="text-xl font-semibold text-slate-100 mb-3">
-                Connect to CleanPool
-              </h2>
-              <p className="text-slate-400 mb-8 text-sm leading-relaxed">
-                Connect your wallet to access institutional-grade DeFi liquidity
-                with privacy-preserving KYC verification.
-              </p>
-              <button onClick={handleLogin} className="btn-primary w-full">
-                Connect Wallet
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* KYC Verification Panel */}
-            <div className="lg:col-span-2">
-              <KYCVerification
-                kycData={kycData}
-                setKycData={setKycData}
-                verificationStatus={verificationStatus}
-                statusMessage={statusMessage}
-                error={error}
-                attestation={attestation}
-                depositAmounts={depositAmounts}
-                setDepositAmounts={setDepositAmounts}
-                isKYCRegistered={isKYCRegistered}
-                kycExpiryDate={kycExpiryDate}
-                onStartVerification={startVerification}
-                onDeposit={depositLiquidity}
-                onReset={resetState}
-              />
-            </div>
 
-            {/* Attestation Details Panel */}
-            <div className="lg:col-span-1">
-              <div className="bg-slate-900 border border-slate-800 rounded-lg p-6">
-                <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider mb-4">
-                  Attestation Details
-                </h3>
+              {/* Page Heading */}
+              <div className="flex flex-wrap justify-between gap-3 pb-8">
+                <div className="flex min-w-72 flex-col gap-2">
+                  <p className="text-white text-4xl font-black leading-tight tracking-tight">
+                    {isKYCRegistered || verificationStatus === "KYC_REGISTERED" ? "Add Liquidity" : "Compliance Onboarding"}
+                  </p>
+                  <p className="text-[#92c9b2] text-base font-normal leading-normal">
+                    {isKYCRegistered || verificationStatus === "KYC_REGISTERED"
+                      ? "Institutional-grade privacy-preserving liquidity provision via TEE signatures."
+                      : "Establish your identity and asset provenance for private liquidity access."}
+                  </p>
+                </div>
+              </div>
 
-                {attestation ? (
-                  <div className="space-y-4">
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Status</p>
-                      <div className="flex items-center gap-2">
-                        <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
-                        <span className="text-emerald-400 font-medium">
-                          Verified
-                        </span>
-                      </div>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Expiry</p>
-                      <p className="text-slate-300 font-mono text-sm">
-                        {new Date(attestation.expiry * 1000).toLocaleDateString()}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Message Hash</p>
-                      <p className="text-slate-300 font-mono text-xs break-all">
-                        {attestation.message_hash}
-                      </p>
-                    </div>
-
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Signer</p>
-                      <p className="text-slate-300 font-mono text-xs break-all">
-                        {attestation.signer_address}
-                      </p>
-                    </div>
-
-                    {protectedDataAddress && (
-                      <div>
-                        <p className="text-xs text-slate-500 mb-1">
-                          Protected Data
-                        </p>
-                        <p className="text-slate-300 font-mono text-xs break-all">
-                          {protectedDataAddress}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="text-center py-8">
-                    <div className="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-3">
-                      <svg
-                        className="w-6 h-6 text-slate-500"
-                        fill="none"
-                        stroke="currentColor"
-                        viewBox="0 0 24 24"
-                      >
-                        <path
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth={1.5}
-                          d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                        />
+              {/* Main Content */}
+              {!isConnected ? (
+                <div className="flex flex-col items-center justify-center py-16">
+                  <div className="card p-12 text-center max-w-md">
+                    <div className="w-16 h-16 bg-[#234839] rounded-full flex items-center justify-center mx-auto mb-6">
+                      <svg className="w-8 h-8 text-[#11d483]" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" />
                       </svg>
                     </div>
-                    <p className="text-slate-500 text-sm">
-                      Complete KYC verification to view attestation
+                    <h2 className="text-xl font-bold text-white mb-3">
+                      Connect to UniShield
+                    </h2>
+                    <p className="text-[#92c9b2] mb-8 text-sm leading-relaxed">
+                      Connect your wallet to access institutional-grade DeFi liquidity
+                      with privacy-preserving KYC verification.
                     </p>
+                    <button onClick={handleLogin} className="btn-primary w-full">
+                      Connect Wallet
+                    </button>
                   </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
+                </div>
+              ) : (
+                <KYCVerification
+                  kycData={kycData}
+                  setKycData={setKycData}
+                  verificationStatus={verificationStatus}
+                  statusMessage={statusMessage}
+                  error={error}
+                  attestation={attestation}
+                  depositAmounts={depositAmounts}
+                  setDepositAmounts={setDepositAmounts}
+                  isKYCRegistered={isKYCRegistered}
+                  kycExpiryDate={kycExpiryDate}
+                  onStartVerification={startVerification}
+                  onDeposit={depositLiquidity}
+                  onReset={resetState}
+                />
+              )}
+            </>
+          )}
+        </div>
       </main>
+
+      {/* Footer */}
+      <footer className="px-6 lg:px-10 py-6 border-t border-[#234839] flex justify-between items-center text-xs text-[#92c9b2]">
+        <div className="flex items-center gap-4">
+          <span>© 2024 UniShield Institutional</span>
+          <span className="w-1 h-1 bg-[#234839] rounded-full"></span>
+          <a className="hover:text-[#11d483] transition-colors" href="#">Privacy Policy</a>
+          <span className="w-1 h-1 bg-[#234839] rounded-full"></span>
+          <a className="hover:text-[#11d483] transition-colors" href="#">Terms of Service</a>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 bg-[#11d483] rounded-full glow-pulse"></span>
+          <span className="text-white font-medium">Sepolia Testnet</span>
+        </div>
+      </footer>
     </div>
   );
 }

@@ -10,15 +10,15 @@ const PoolStatus: React.FC = () => {
     };
 
     return (
-        <div className="bg-slate-900 border border-slate-800 rounded-lg p-6 mb-6">
+        <div className="card p-6 mb-6">
             <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
-                    <div className="w-3 h-3 bg-emerald-500 rounded-full animate-pulse"></div>
-                    <h2 className="text-lg font-semibold text-slate-100">
+                    <div className="w-3 h-3 bg-[#11d483] rounded-full animate-pulse"></div>
+                    <h2 className="text-lg font-semibold text-white">
                         Pool Compliance Status
                     </h2>
                 </div>
-                <span className="px-3 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-medium rounded-full border border-emerald-500/20">
+                <span className="badge badge-success">
                     FULLY COMPLIANT
                 </span>
             </div>
@@ -26,22 +26,22 @@ const PoolStatus: React.FC = () => {
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                 {/* Total Liquidity */}
                 <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">
+                    <p className="text-xs text-[#92c9b2] uppercase tracking-wider mb-1 font-bold">
                         Total Liquidity
                     </p>
-                    <p className="text-2xl font-semibold text-slate-100 font-mono">
+                    <p className="text-2xl font-semibold text-white font-mono">
                         {poolStats.totalLiquidity}
                     </p>
                 </div>
 
                 {/* Verified Participants */}
                 <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">
+                    <p className="text-xs text-[#92c9b2] uppercase tracking-wider mb-1 font-bold">
                         Verified Participants
                     </p>
-                    <p className="text-2xl font-semibold text-slate-100 font-mono">
+                    <p className="text-2xl font-semibold text-white font-mono">
                         {poolStats.verifiedParticipants}
-                        <span className="text-slate-500 text-lg">
+                        <span className="text-[#92c9b2] text-lg">
                             /{poolStats.totalParticipants}
                         </span>
                     </p>
@@ -49,15 +49,15 @@ const PoolStatus: React.FC = () => {
 
                 {/* Compliance Rate */}
                 <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">
+                    <p className="text-xs text-[#92c9b2] uppercase tracking-wider mb-1 font-bold">
                         Compliance Rate
                     </p>
                     <div className="flex items-center gap-2">
-                        <p className="text-2xl font-semibold text-emerald-400 font-mono">
+                        <p className="text-2xl font-semibold text-[#11d483] font-mono">
                             {poolStats.poolHealth}%
                         </p>
                         <svg
-                            className="w-5 h-5 text-emerald-500"
+                            className="w-5 h-5 text-[#11d483]"
                             fill="currentColor"
                             viewBox="0 0 20 20"
                         >
@@ -72,14 +72,14 @@ const PoolStatus: React.FC = () => {
 
                 {/* Pool Status Indicator */}
                 <div>
-                    <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">
+                    <p className="text-xs text-[#92c9b2] uppercase tracking-wider mb-1 font-bold">
                         Pool Status
                     </p>
                     <div className="flex items-center gap-2">
-                        <span className="text-2xl font-semibold text-slate-100">Clean</span>
-                        <div className="w-6 h-6 bg-emerald-500/20 rounded-full flex items-center justify-center">
+                        <span className="text-2xl font-semibold text-white">Protected</span>
+                        <div className="w-6 h-6 bg-[#11d483]/20 rounded-full flex items-center justify-center">
                             <svg
-                                className="w-4 h-4 text-emerald-500"
+                                className="w-4 h-4 text-[#11d483]"
                                 fill="none"
                                 stroke="currentColor"
                                 viewBox="0 0 24 24"
@@ -97,18 +97,18 @@ const PoolStatus: React.FC = () => {
             </div>
 
             {/* Compliance Bar */}
-            <div className="mt-6 pt-6 border-t border-slate-800">
+            <div className="mt-6 pt-6 border-t border-[#234839]">
                 <div className="flex items-center justify-between mb-2">
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-[#92c9b2]">
                         All participants have valid KYC attestations
                     </span>
-                    <span className="text-xs text-emerald-400 font-mono">
+                    <span className="text-xs text-[#11d483] font-mono">
                         {poolStats.poolHealth}% verified
                     </span>
                 </div>
-                <div className="w-full bg-slate-800 rounded-full h-2">
+                <div className="progress-bar">
                     <div
-                        className="bg-gradient-to-r from-emerald-500 to-emerald-400 h-2 rounded-full transition-all duration-500"
+                        className="progress-bar-fill"
                         style={{ width: `${poolStats.poolHealth}%` }}
                     ></div>
                 </div>

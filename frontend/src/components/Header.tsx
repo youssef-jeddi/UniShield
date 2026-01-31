@@ -1,10 +1,15 @@
 import React from "react";
 
+type PageType = 'dashboard' | 'pools' | 'compliance' | 'governance';
+
 interface HeaderProps {
     isConnected: boolean;
     address?: string;
     chainId: number;
     networks: { id: number; name: string }[];
+    isKYCRegistered?: boolean;
+    currentPage: PageType;
+    onPageChange: (page: PageType) => void;
     onLogin: () => void;
     onLogout: () => void;
     onChainChange: (event: React.ChangeEvent<HTMLSelectElement>) => void;
@@ -15,6 +20,9 @@ const Header: React.FC<HeaderProps> = ({
     address,
     chainId,
     networks,
+    isKYCRegistered = false,
+    currentPage,
+    onPageChange,
     onLogin,
     onLogout,
     onChainChange,
@@ -23,68 +31,58 @@ const Header: React.FC<HeaderProps> = ({
         return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
     };
 
+    const navItems: { key: PageType; label: string }[] = [
+        { key: 'dashboard', label: 'Dashboard' },
+        { key: 'pools', label: 'Pools' },
+        { key: 'compliance', label: 'Compliance' },
+        { key: 'governance', label: 'Governance' },
+    ];
+
     return (
-        <header className="border-b border-slate-800 bg-slate-900/50 backdrop-blur-sm sticky top-0 z-50">
-            <div className="max-w-7xl mx-auto px-6 py-4">
+        <header className="border-b border-[#234839] bg-[#10221a] sticky top-0 z-50">
+            <div className="max-w-7xl mx-auto px-6 lg:px-10 py-3">
                 <div className="flex items-center justify-between">
                     {/* Logo */}
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg flex items-center justify-center">
+                    <div
+                        className="flex items-center gap-4 cursor-pointer"
+                        onClick={() => onPageChange('dashboard')}
+                    >
+                        <div className="w-8 h-8 bg-[#11d483] rounded-lg flex items-center justify-center">
                             <svg
-                                className="w-6 h-6 text-white"
-                                fill="none"
-                                stroke="currentColor"
+                                className="w-5 h-5 text-[#10221a]"
+                                fill="currentColor"
                                 viewBox="0 0 24 24"
                             >
-                                <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"
-                                />
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z" />
                             </svg>
                         </div>
-                        <div>
-                            <h1 className="text-lg font-semibold text-slate-100 tracking-tight">
-                                CleanPool
-                            </h1>
-                            <p className="text-xs text-slate-500">
-                                Institutional DeFi Access
-                            </p>
-                        </div>
+                        <h2 className="text-white text-lg font-bold tracking-tight">
+                            UniShield
+                        </h2>
                     </div>
 
                     {/* Navigation */}
-                    <nav className="hidden md:flex items-center gap-8">
-                        <a
-                            href="#"
-                            className="text-sm text-slate-400 hover:text-slate-100 transition-colors"
-                        >
-                            Dashboard
-                        </a>
-                        <a
-                            href="#"
-                            className="text-sm text-slate-400 hover:text-slate-100 transition-colors"
-                        >
-                            Pools
-                        </a>
-                        <a
-                            href="#"
-                            className="text-sm text-slate-400 hover:text-slate-100 transition-colors"
-                        >
-                            Documentation
-                        </a>
+                    <nav className="hidden md:flex items-center gap-9">
+                        {navItems.map((item) => (
+                            <button
+                                key={item.key}
+                                onClick={() => onPageChange(item.key)}
+                                className={`nav-link ${currentPage === item.key ? 'nav-link-active' : ''}`}
+                            >
+                                {item.label}
+                            </button>
+                        ))}
                     </nav>
 
                     {/* Wallet Connection */}
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3">
                         {isConnected && (
                             <>
                                 {/* Chain Selector */}
                                 <select
                                     value={chainId}
                                     onChange={onChainChange}
-                                    className="bg-slate-800 border border-slate-700 text-slate-300 text-sm rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+                                    className="bg-[#234839] border-none text-white text-sm rounded-lg px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-[#11d483]/50"
                                 >
                                     {networks?.map((network) => (
                                         <option key={network.id} value={network.id}>
@@ -94,22 +92,33 @@ const Header: React.FC<HeaderProps> = ({
                                 </select>
 
                                 {/* Address Display */}
-                                <div className="flex items-center gap-2 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2">
-                                    <span className="w-2 h-2 bg-emerald-500 rounded-full"></span>
-                                    <span className="text-sm font-mono text-slate-300">
+                                <button className="wallet-btn">
+                                    <span className="truncate">
                                         {address && truncateAddress(address)}
                                     </span>
-                                </div>
+                                </button>
+
+                                {/* Verified Badge */}
+                                {isKYCRegistered && (
+                                    <div className="verified-badge">
+                                        <svg className="w-4 h-4 text-[#11d483]" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-2 16l-4-4 1.41-1.41L10 14.17l6.59-6.59L18 9l-8 8z" />
+                                        </svg>
+                                        <span className="text-[#11d483]">Verified</span>
+                                    </div>
+                                )}
                             </>
                         )}
 
                         {!isConnected ? (
-                            <button onClick={onLogin} className="btn-primary">
+                            <button onClick={onLogin} className="wallet-btn">
                                 Connect Wallet
                             </button>
                         ) : (
-                            <button onClick={onLogout} className="btn-secondary">
-                                Disconnect
+                            <button onClick={onLogout} className="btn-ghost text-white hover:text-red-400">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                </svg>
                             </button>
                         )}
                     </div>
