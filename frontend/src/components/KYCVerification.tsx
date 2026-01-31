@@ -1,6 +1,11 @@
 import React, { useRef } from "react";
 import type { VerificationStatus, KYCData, AttestationResult } from "../App";
 
+export interface DepositAmounts {
+    token0Amount: string;
+    token1Amount: string;
+}
+
 interface KYCVerificationProps {
     kycData: KYCData;
     setKycData: React.Dispatch<React.SetStateAction<KYCData>>;
@@ -8,6 +13,10 @@ interface KYCVerificationProps {
     statusMessage: string;
     error: string;
     attestation: AttestationResult | null;
+    depositAmounts: DepositAmounts;
+    setDepositAmounts: React.Dispatch<React.SetStateAction<DepositAmounts>>;
+    isKYCRegistered: boolean;
+    kycExpiryDate: Date | null;
     onStartVerification: () => void;
     onDeposit: () => void;
     onReset: () => void;
@@ -44,6 +53,10 @@ const KYCVerification: React.FC<KYCVerificationProps> = ({
     statusMessage,
     error,
     attestation,
+    depositAmounts,
+    setDepositAmounts,
+    isKYCRegistered,
+    kycExpiryDate,
     onStartVerification,
     onDeposit,
     onReset,
@@ -163,16 +176,122 @@ const KYCVerification: React.FC<KYCVerificationProps> = ({
         <div className="bg-slate-900 border border-slate-800 rounded-lg">
             {/* Header */}
             <div className="px-6 py-4 border-b border-slate-800">
-                <h2 className="text-lg font-semibold text-slate-100">
-                    KYC Verification
-                </h2>
+                <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold text-slate-100">
+                        {isKYCRegistered || verificationStatus === "KYC_REGISTERED"
+                            ? "Add Liquidity"
+                            : "KYC Verification"}
+                    </h2>
+                    {(isKYCRegistered || verificationStatus === "KYC_REGISTERED") && (
+                        <span className="flex items-center gap-1.5 px-2 py-1 bg-emerald-500/10 text-emerald-400 text-xs font-medium rounded-full">
+                            <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                            KYC Verified
+                        </span>
+                    )}
+                </div>
                 <p className="text-sm text-slate-400 mt-1">
-                    Upload your identity document to verify your eligibility for
-                    institutional pools
+                    {isKYCRegistered || verificationStatus === "KYC_REGISTERED"
+                        ? `KYC valid until ${kycExpiryDate?.toLocaleDateString() || "N/A"}. You can now add liquidity.`
+                        : "Upload your identity document to verify your eligibility for institutional pools"}
                 </p>
             </div>
 
             <div className="p-6">
+                {/* KYC Checking State */}
+                {verificationStatus === "KYC_CHECKING" && (
+                    <div className="text-center py-12">
+                        <div className="w-12 h-12 mx-auto mb-4">
+                            <svg
+                                className="animate-spin text-blue-500 w-12 h-12"
+                                fill="none"
+                                viewBox="0 0 24 24"
+                            >
+                                <circle
+                                    className="opacity-25"
+                                    cx="12"
+                                    cy="12"
+                                    r="10"
+                                    stroke="currentColor"
+                                    strokeWidth="4"
+                                />
+                                <path
+                                    className="opacity-75"
+                                    fill="currentColor"
+                                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                                />
+                            </svg>
+                        </div>
+                        <p className="text-slate-400">{statusMessage || "Checking KYC status..."}</p>
+                    </div>
+                )}
+
+                {/* KYC Registered - Show Liquidity Form Directly */}
+                {verificationStatus === "KYC_REGISTERED" && (
+                    <div className="space-y-6">
+                        <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 flex gap-3">
+                            <svg className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                            </svg>
+                            <div>
+                                <p className="text-sm text-emerald-400 font-medium">KYC Already Verified</p>
+                                <p className="text-xs text-slate-500 mt-1">
+                                    Your identity has been verified. You can add liquidity directly.
+                                </p>
+                            </div>
+                        </div>
+
+                        {/* Deposit Amount Inputs */}
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-slate-300 mb-2">
+                                    WETH Amount
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.001"
+                                    min="0"
+                                    placeholder="0.01"
+                                    value={depositAmounts.token0Amount}
+                                    onChange={(e) =>
+                                        setDepositAmounts((prev) => ({
+                                            ...prev,
+                                            token0Amount: e.target.value,
+                                        }))
+                                    }
+                                    className="w-full bg-slate-800 border border-slate-700 text-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-300 mb-2">
+                                    USDC Amount
+                                </label>
+                                <input
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    placeholder="10"
+                                    value={depositAmounts.token1Amount}
+                                    onChange={(e) =>
+                                        setDepositAmounts((prev) => ({
+                                            ...prev,
+                                            token1Amount: e.target.value,
+                                        }))
+                                    }
+                                    className="w-full bg-slate-800 border border-slate-700 text-slate-300 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+                                />
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={onDeposit}
+                            disabled={!depositAmounts.token0Amount || !depositAmounts.token1Amount}
+                            className="btn-primary w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            Add Liquidity
+                        </button>
+                    </div>
+                )}
+
                 {/* Progress Steps */}
                 {isProcessing && (
                     <div className="mb-8">
@@ -272,8 +391,56 @@ const KYCVerification: React.FC<KYCVerificationProps> = ({
                             </p>
 
                             {verificationStatus === "VERIFIED" && (
-                                <div className="mt-6 space-y-3">
-                                    <button onClick={onDeposit} className="btn-primary">
+                                <div className="mt-6 space-y-4">
+                                    {/* Deposit Amount Inputs */}
+                                    <div className="bg-slate-800/50 rounded-lg p-4 space-y-4 text-left">
+                                        <p className="text-sm text-slate-400 text-center">
+                                            Enter the amount of liquidity to deposit:
+                                        </p>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-400 mb-1">
+                                                WETH Amount
+                                            </label>
+                                            <input
+                                                type="number"
+                                                step="0.001"
+                                                min="0"
+                                                placeholder="0.01"
+                                                value={depositAmounts.token0Amount}
+                                                onChange={(e) =>
+                                                    setDepositAmounts((prev) => ({
+                                                        ...prev,
+                                                        token0Amount: e.target.value,
+                                                    }))
+                                                }
+                                                className="w-full bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-400 mb-1">
+                                                USDC Amount
+                                            </label>
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                placeholder="10"
+                                                value={depositAmounts.token1Amount}
+                                                onChange={(e) =>
+                                                    setDepositAmounts((prev) => ({
+                                                        ...prev,
+                                                        token1Amount: e.target.value,
+                                                    }))
+                                                }
+                                                className="w-full bg-slate-900 border border-slate-700 text-slate-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500"
+                                            />
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={onDeposit}
+                                        className="btn-primary w-full"
+                                        disabled={!depositAmounts.token0Amount || !depositAmounts.token1Amount}
+                                    >
                                         Deposit Liquidity
                                     </button>
                                     <button

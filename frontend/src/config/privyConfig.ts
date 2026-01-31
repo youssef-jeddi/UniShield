@@ -1,4 +1,4 @@
-import { arbitrum, arbitrumSepolia } from 'viem/chains';
+import { arbitrum, arbitrumSepolia, sepolia } from 'viem/chains';
 
 export const bellecour = {
   id: 134,
@@ -17,8 +17,14 @@ export const bellecour = {
   },
 } as const;
 
+// Sepolia chain ID: 11155111 (where UniShield hook is deployed)
+// Arbitrum Sepolia chain ID: 421614 (where iExec DataProtector runs)
+export const SEPOLIA_CHAIN_ID = 11155111;
+export const ARBITRUM_SEPOLIA_CHAIN_ID = 421614;
+
 export const supportedChains = [
   bellecour,
+  sepolia,         // Added for UniShield hook interaction
   arbitrumSepolia,
   arbitrum,
 ];

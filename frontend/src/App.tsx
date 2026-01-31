@@ -5,16 +5,25 @@ import { usePrivy, useWallets } from "@privy-io/react-auth";
 import {
   IExecDataProtector,
   IExecDataProtectorCore,
-  type GetResultFromCompletedTaskParams,
-  type ProtectedData,
 } from "@iexec/dataprotector";
 import { ethers } from "ethers";
-import { supportedChains } from "./config/privyConfig";
+import { supportedChains, SEPOLIA_CHAIN_ID, ARBITRUM_SEPOLIA_CHAIN_ID } from "./config/privyConfig";
 import { normalizeChainId } from "./utils/normalizeChainId";
-import KYCVerification from "./components/KYCVerification";
+import KYCVerification, { type DepositAmounts } from "./components/KYCVerification";
 import PoolStatus from "./components/PoolStatus";
 import Header from "./components/Header";
-import { POOL_MANAGER_ADDRESS, POOL_MODIFY_ROUTER_ADDRESS, CLEANPOOL_HOOK_ADDRESS, TOKEN_A_ADDRESS, TOKEN_B_ADDRESS, POOL_FEE, TICK_SPACING } from './config/contract';
+import {
+  POOL_MANAGER_ADDRESS,
+  POOL_MODIFY_ROUTER_ADDRESS,
+  CLEANPOOL_HOOK_ADDRESS,
+  TOKEN_A_ADDRESS,
+  TOKEN_B_ADDRESS,
+  POOL_FEE,
+  TICK_SPACING,
+  ERC20_ABI,
+  POOL_MODIFY_ROUTER_ABI,
+  getSortedTokens
+} from './config/contract';
 
 // Hook ABI (only the functions we need)
 const HOOK_ABI = [
@@ -26,6 +35,8 @@ const HOOK_ABI = [
 // Verification state machine
 export type VerificationStatus =
   | "IDLE"
+  | "KYC_CHECKING"     // Checking on-chain KYC status
+  | "KYC_REGISTERED"   // Already KYC'd, show liquidity form
   | "UPLOADING"
   | "ENCRYPTING"
   | "GRANTING_ACCESS"
@@ -89,6 +100,16 @@ export default function App() {
   );
   const [error, setError] = useState<string>("");
 
+  // Deposit amounts state
+  const [depositAmounts, setDepositAmounts] = useState<DepositAmounts>({
+    token0Amount: "",
+    token1Amount: "",
+  });
+
+  // On-chain KYC status
+  const [isKYCRegistered, setIsKYCRegistered] = useState<boolean>(false);
+  const [kycExpiryDate, setKycExpiryDate] = useState<Date | null>(null);
+
   // iApp address (replace with your deployed iApp address)
   const IAPP_ADDRESS = "0xe4651C6F9354debbfFF077E1E64b5A6cA00B615D";
 
@@ -112,33 +133,51 @@ export default function App() {
     setAttestation(null);
     setError("");
     setKycData({ documentType: "", country: "", file: null });
+    setIsKYCRegistered(false);
+    setKycExpiryDate(null);
   };
 
   const handleChainChange = async (
     event: React.ChangeEvent<HTMLSelectElement>
   ) => {
     const selectedChainId = parseInt(event.target.value);
+    console.log("Attempting to switch to chain:", selectedChainId, "from:", chainId);
+
     if (selectedChainId && selectedChainId !== chainId && wallet) {
       try {
+        console.log("Calling wallet.switchChain...");
         await wallet.switchChain(selectedChainId);
-      } catch (error) {
+        console.log("Chain switch successful!");
+      } catch (error: any) {
         console.error("Failed to switch chain:", error);
+        console.error("Error message:", error?.message);
         event.target.value = chainId.toString();
       }
+    } else {
+      console.log("Switch conditions not met - selectedChainId:", selectedChainId, "chainId:", chainId, "wallet:", !!wallet);
     }
   };
 
   useEffect(() => {
     const initializeDataProtector = async () => {
       if (isConnected && wallet) {
-        try {
-          const provider = await wallet.getEthereumProvider();
-          const dataProtector = new IExecDataProtector(provider, {
-            allowExperimentalNetworks: true,
-          });
-          setDataProtectorCore(dataProtector.core);
-        } catch (error) {
-          console.error("Failed to initialize data protector:", error);
+        // DataProtector only works on Arbitrum Sepolia (or Bellecour)
+        const currentChainId = normalizeChainId(wallet.chainId);
+        if (currentChainId === ARBITRUM_SEPOLIA_CHAIN_ID || currentChainId === 134) {
+          try {
+            const provider = await wallet.getEthereumProvider();
+            const dataProtector = new IExecDataProtector(provider, {
+              allowExperimentalNetworks: true,
+            });
+            setDataProtectorCore(dataProtector.core);
+            console.log("DataProtector initialized on chain:", currentChainId);
+          } catch (error) {
+            console.error("Failed to initialize data protector:", error);
+            setDataProtectorCore(null);
+          }
+        } else {
+          // Not on a supported iExec chain, clear the instance
+          console.log("Not on iExec-supported chain, DataProtector not initialized");
           setDataProtectorCore(null);
         }
       } else {
@@ -147,6 +186,65 @@ export default function App() {
     };
     initializeDataProtector();
   }, [isConnected, wallet, chainId]);
+
+  const checkKYCStatus = async () => {
+    if (!address) return;
+
+    setVerificationStatus("KYC_CHECKING");
+    setStatusMessage("Checking KYC status...");
+
+    console.log("Checking KYC status for address:", address);
+    console.log("Hook address:", CLEANPOOL_HOOK_ADDRESS);
+
+    try {
+      // Use a static provider for Sepolia - no need to switch user's chain
+      // This is a read-only call, so we can use any public RPC
+      const sepoliaRpc = "https://1rpc.io/sepolia";
+      const sepoliaProvider = new ethers.JsonRpcProvider(sepoliaRpc);
+
+      const hook = new ethers.Contract(CLEANPOOL_HOOK_ADDRESS, HOOK_ABI, sepoliaProvider);
+
+      console.log("Calling isKYCValid...");
+      const isValid = await hook.isKYCValid(address);
+      console.log("isKYCValid result:", isValid);
+
+      if (isValid) {
+        // Get expiry date
+        const expiry = await hook.kycExpiry(address);
+        const expiryDate = new Date(Number(expiry) * 1000);
+
+        setIsKYCRegistered(true);
+        setKycExpiryDate(expiryDate);
+        setVerificationStatus("KYC_REGISTERED");
+        setStatusMessage(`KYC valid until ${expiryDate.toLocaleDateString()}`);
+        console.log("User is KYC registered, expiry:", expiryDate);
+      } else {
+        setIsKYCRegistered(false);
+        setKycExpiryDate(null);
+        setVerificationStatus("IDLE");
+        setStatusMessage("");
+        console.log("User is not KYC registered");
+      }
+    } catch (error: any) {
+      console.error("Failed to check KYC status:", error);
+      console.error("Error details:", error.message);
+      // If check fails, assume not registered and show KYC form
+      setIsKYCRegistered(false);
+      setVerificationStatus("IDLE");
+      setStatusMessage("");
+    }
+  };
+
+  // Check KYC status when wallet connects
+  useEffect(() => {
+    if (isConnected && address) {
+      // Small delay to ensure wallet is ready
+      const timer = setTimeout(() => {
+        checkKYCStatus();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [isConnected, address]);
 
   // Convert file to ArrayBuffer for DataProtector
   const fileToArrayBuffer = (file: File): Promise<ArrayBuffer> => {
@@ -160,17 +258,31 @@ export default function App() {
 
   // Main verification flow
   const startVerification = async () => {
-    if (!dataProtectorCore || !address || !kycData.file) {
+    if (!dataProtectorCore || !address || !kycData.file || !wallet) {
       setError("Missing required data");
       return;
     }
 
     setError("");
     setVerificationStatus("UPLOADING");
-    setStatusMessage("Preparing document...");
+    setStatusMessage("Preparing...");
 
     try {
+      // Step 0: Ensure we're on Arbitrum Sepolia for iExec DataProtector
+      const currentChainId = normalizeChainId(wallet.chainId);
+      if (currentChainId !== ARBITRUM_SEPOLIA_CHAIN_ID) {
+        setStatusMessage("Switching to Arbitrum Sepolia for iExec...");
+        try {
+          await wallet.switchChain(ARBITRUM_SEPOLIA_CHAIN_ID);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (switchError: any) {
+          console.error("Failed to switch to Arbitrum Sepolia:", switchError);
+          throw new Error("Please switch to Arbitrum Sepolia network for KYC verification");
+        }
+      }
+
       // Step 1: Convert file to ArrayBuffer
+      setStatusMessage("Preparing document...");
       const fileBuffer = await fileToArrayBuffer(kycData.file);
 
       // Step 2: Protect data
@@ -178,7 +290,7 @@ export default function App() {
       setStatusMessage("Encrypting document with iExec DataProtector...");
 
       const protectedData = await dataProtectorCore.protectData({
-        name: `KYC-${address.slice(0, 8)}-${Date.now()}`,
+        name: `KYC-${address.slice(0, 8)}`,
         data: {
           document_data: new Uint8Array(fileBuffer),
           document_type: kycData.documentType,
@@ -318,28 +430,168 @@ export default function App() {
     return true;
   };
 
-  // Deposit liquidity with attestation (two-step process)
+  // Deposit liquidity (works for both newly verified and already KYC'd users)
   const depositLiquidity = async () => {
-    if (!attestation || !wallet) return;
+    // Allow if user has attestation (just verified) OR is already registered on-chain
+    if ((!attestation && !isKYCRegistered) || !wallet) return;
+
+    // Validate deposit amounts
+    const amount0 = parseFloat(depositAmounts.token0Amount);
+    const amount1 = parseFloat(depositAmounts.token1Amount);
+    if (isNaN(amount0) || isNaN(amount1) || amount0 <= 0 || amount1 <= 0) {
+      setError("Please enter valid deposit amounts");
+      return;
+    }
 
     setVerificationStatus("DEPOSITING");
     setStatusMessage("Preparing transaction...");
 
     try {
+      // Step 0: Switch to Sepolia (where the hook is deployed)
+      const currentChainId = normalizeChainId(wallet.chainId);
+      if (currentChainId !== SEPOLIA_CHAIN_ID) {
+        setStatusMessage("Switching to Sepolia network...");
+        try {
+          await wallet.switchChain(SEPOLIA_CHAIN_ID);
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        } catch (switchError: any) {
+          console.error("Failed to switch to Sepolia:", switchError);
+          throw new Error("Please switch to Sepolia network manually");
+        }
+      }
+
       const provider = await wallet.getEthereumProvider();
       const ethersProvider = new ethers.BrowserProvider(provider);
       const signer = await ethersProvider.getSigner();
 
-      // Step 1: Register KYC on-chain (if not already registered)
-      setStatusMessage("Registering KYC on-chain...");
-      await registerKYCOnChain(attestation, signer);
+      // Step 1: Register KYC on-chain (only if we have a fresh attestation)
+      if (attestation && !isKYCRegistered) {
+        setStatusMessage("Registering KYC on-chain...");
+        await registerKYCOnChain(attestation, signer);
+      } else {
+        setStatusMessage("KYC already registered...");
+      }
 
-      // Step 2: For hackathon demo, we just show KYC registration success
-      // In production, you would call addLiquidity on a router contract here
-      // The hook's beforeAddLiquidity will check kycExpiry[sender] automatically
+      // Step 2: Get sorted tokens first (Uniswap v4 requires currency0 < currency1)
+      const { currency0, currency1 } = getSortedTokens();
+      console.log("Sorted tokens - currency0:", currency0, "currency1:", currency1);
+
+      // Approve tokens to BOTH the router AND the PoolManager
+      // (PoolModifyLiquidityTest uses the PoolManager for settlement)
+      setStatusMessage("Approving tokens...");
+
+      const token0Contract = new ethers.Contract(currency0, ERC20_ABI, signer);
+      const token1Contract = new ethers.Contract(currency1, ERC20_ABI, signer);
+
+      const token0Decimals = await token0Contract.decimals();
+      const token1Decimals = await token1Contract.decimals();
+      const token0Symbol = await token0Contract.symbol();
+      const token1Symbol = await token1Contract.symbol();
+
+      console.log("Token0:", token0Symbol, "decimals:", token0Decimals);
+      console.log("Token1:", token1Symbol, "decimals:", token1Decimals);
+
+      // Determine amounts based on which token is which
+      // currency0 is USDC (6 decimals), currency1 is WETH (18 decimals)
+      let amount0Wei, amount1Wei;
+      if (token0Symbol === "USDC") {
+        amount0Wei = ethers.parseUnits(depositAmounts.token1Amount, token0Decimals); // USDC amount
+        amount1Wei = ethers.parseEther(depositAmounts.token0Amount); // WETH amount
+      } else {
+        amount0Wei = ethers.parseEther(depositAmounts.token0Amount);
+        amount1Wei = ethers.parseUnits(depositAmounts.token1Amount, token1Decimals);
+      }
+
+      console.log("Amount0 (wei):", amount0Wei.toString());
+      console.log("Amount1 (wei):", amount1Wei.toString());
+
+      // Check balances
+      const balance0 = await token0Contract.balanceOf(await signer.getAddress());
+      const balance1 = await token1Contract.balanceOf(await signer.getAddress());
+      console.log("Balance0:", balance0.toString(), "needed:", amount0Wei.toString());
+      console.log("Balance1:", balance1.toString(), "needed:", amount1Wei.toString());
+
+      // Approve to BOTH router AND PoolManager (v4 needs approvals to multiple contracts)
+      const maxApproval = ethers.MaxUint256;
+
+      // Force fresh approvals - don't rely on allowance checks
+      setStatusMessage(`Approving ${token0Symbol} for router...`);
+      console.log(`Approving ${token0Symbol} for router...`);
+      const approveTx0Router = await token0Contract.approve(POOL_MODIFY_ROUTER_ADDRESS, maxApproval);
+      await approveTx0Router.wait();
+      console.log(token0Symbol, "approved for router");
+
+      setStatusMessage(`Approving ${token0Symbol} for PoolManager...`);
+      console.log(`Approving ${token0Symbol} for PoolManager...`);
+      const approveTx0PM = await token0Contract.approve(POOL_MANAGER_ADDRESS, maxApproval);
+      await approveTx0PM.wait();
+      console.log(token0Symbol, "approved for PoolManager");
+
+      setStatusMessage(`Approving ${token1Symbol} for router...`);
+      console.log(`Approving ${token1Symbol} for router...`);
+      const approveTx1Router = await token1Contract.approve(POOL_MODIFY_ROUTER_ADDRESS, maxApproval);
+      await approveTx1Router.wait();
+      console.log(token1Symbol, "approved for router");
+
+      setStatusMessage(`Approving ${token1Symbol} for PoolManager...`);
+      console.log(`Approving ${token1Symbol} for PoolManager...`);
+      const approveTx1PM = await token1Contract.approve(POOL_MANAGER_ADDRESS, maxApproval);
+      await approveTx1PM.wait();
+      console.log(token1Symbol, "approved for PoolManager");
+
+      // Step 3: Add liquidity via the router
+      setStatusMessage("Adding liquidity to pool...");
+
+      // Create the pool key
+      const poolKey = {
+        currency0: currency0,
+        currency1: currency1,
+        fee: POOL_FEE,
+        tickSpacing: TICK_SPACING,
+        hooks: CLEANPOOL_HOOK_ADDRESS,
+      };
+
+      // Create the liquidity params
+      // Using a smaller tick range for testing
+      const tickLower = -600; // Closer to current tick (0)
+      const tickUpper = 600;
+
+      // Use an EXTREMELY small liquidity amount - Uniswap v4 liquidity units can require lots of tokens
+      // 1e6 worked, 1e10 failed - trying 1e8 as a middle ground
+      const liquidityDelta = BigInt(1e8); // Testing larger liquidity
+
+      console.log("Using liquidityDelta:", liquidityDelta.toString());
+
+      const modifyParams = {
+        tickLower: tickLower,
+        tickUpper: tickUpper,
+        liquidityDelta: liquidityDelta,
+        salt: ethers.zeroPadBytes(ethers.toUtf8Bytes("UniShield"), 32),
+      };
+
+      console.log("Pool Key:", poolKey);
+      console.log("Modify Params:", modifyParams);
+
+      // Call the router
+      const router = new ethers.Contract(
+        POOL_MODIFY_ROUTER_ADDRESS,
+        POOL_MODIFY_ROUTER_ABI,
+        signer
+      );
+
+      const tx = await router.modifyLiquidity(
+        poolKey,
+        modifyParams,
+        "0x", // Empty hook data
+        { gasLimit: 500000 }
+      );
+
+      setStatusMessage("Waiting for confirmation...");
+      const receipt = await tx.wait();
+      console.log("Liquidity added! Tx:", receipt.hash);
 
       setVerificationStatus("COMPLETED");
-      setStatusMessage("KYC registered! You can now add liquidity to the pool.");
+      setStatusMessage("Liquidity deposited successfully!");
 
     } catch (err: any) {
       console.error("Deposit error:", err);
@@ -406,6 +658,10 @@ export default function App() {
                 statusMessage={statusMessage}
                 error={error}
                 attestation={attestation}
+                depositAmounts={depositAmounts}
+                setDepositAmounts={setDepositAmounts}
+                isKYCRegistered={isKYCRegistered}
+                kycExpiryDate={kycExpiryDate}
                 onStartVerification={startVerification}
                 onDeposit={depositLiquidity}
                 onReset={resetState}

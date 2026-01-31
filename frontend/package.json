@@ -13,6 +13,7 @@
     "@iexec/dataprotector": "^2.0.0-beta.19",
     "@privy-io/react-auth": "^3.1.0",
     "@tailwindcss/vite": "^4.1.14",
+    "graphql": "^16.12.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "tailwindcss": "^4.1.14"
@@ -29,6 +30,6 @@
     "globals": "^16.4.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.45.0",
-    "vite": "^7.1.7"
+    "vite": "^7.3.1"
   }
 }
