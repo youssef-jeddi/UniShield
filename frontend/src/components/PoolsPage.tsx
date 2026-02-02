@@ -89,6 +89,15 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
     const [depositStatus, setDepositStatus] = useState<'idle' | 'approving' | 'depositing' | 'success' | 'error'>('idle');
     const [depositError, setDepositError] = useState<string>('');
 
+    // Withdraw state
+    const [actionMode, setActionMode] = useState<'deposit' | 'withdraw'>('deposit');
+    const [withdrawAmounts, setWithdrawAmounts] = useState({
+        token0Amount: '',
+        token1Amount: '',
+    });
+    const [withdrawStatus, setWithdrawStatus] = useState<'idle' | 'withdrawing' | 'success' | 'error'>('idle');
+    const [withdrawError, setWithdrawError] = useState<string>('');
+
     useEffect(() => {
         fetchPoolData();
     }, []);
@@ -305,11 +314,146 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
         }
     };
 
+    const handleWithdraw = async () => {
+        if (!wallet || !selectedPool || !address) return;
+
+        const wethAmount = parseFloat(withdrawAmounts.token0Amount);
+        const usdcAmount = parseFloat(withdrawAmounts.token1Amount);
+
+        if (isNaN(wethAmount) || isNaN(usdcAmount) || wethAmount <= 0 || usdcAmount <= 0) {
+            setWithdrawError('Please enter valid withdrawal amounts');
+            return;
+        }
+
+        setWithdrawStatus('withdrawing');
+        setWithdrawError('');
+
+        try {
+            const provider = await wallet.getEthereumProvider();
+            const ethersProvider = new ethers.BrowserProvider(provider);
+            const signer = await ethersProvider.getSigner();
+
+            const { currency0, currency1 } = getSortedTokens();
+
+            const token0Contract = new ethers.Contract(currency0, ERC20_ABI, signer);
+            const token1Contract = new ethers.Contract(currency1, ERC20_ABI, signer);
+
+            const [decimals0, decimals1, symbol0, symbol1] = await Promise.all([
+                token0Contract.decimals(),
+                token1Contract.decimals(),
+                token0Contract.symbol(),
+                token1Contract.symbol(),
+            ]);
+
+            console.log("Withdrawing - Token0 (currency0):", symbol0, "decimals:", decimals0);
+            console.log("Withdrawing - Token1 (currency1):", symbol1, "decimals:", decimals1);
+
+            // Map user inputs to the correct token order
+            let amount0Wei: bigint, amount1Wei: bigint;
+            if (symbol0 === 'USDC' || symbol0 === 'cUSD') {
+                // currency0 = USDC, currency1 = WETH
+                amount0Wei = ethers.parseUnits(usdcAmount.toString(), decimals0);
+                amount1Wei = ethers.parseUnits(wethAmount.toString(), decimals1);
+            } else {
+                // currency0 = WETH, currency1 = USDC
+                amount0Wei = ethers.parseUnits(wethAmount.toString(), decimals0);
+                amount1Wei = ethers.parseUnits(usdcAmount.toString(), decimals1);
+            }
+
+            console.log("Withdraw Amount0 (wei):", amount0Wei.toString());
+            console.log("Withdraw Amount1 (wei):", amount1Wei.toString());
+
+            // Get current pool state to calculate proper liquidity
+            const poolManager = new ethers.Contract(POOL_MANAGER_ADDRESS, POOL_MANAGER_ABI, ethersProvider);
+            const poolId = computePoolId(currency0, currency1, POOL_FEE, TICK_SPACING, CLEANPOOL_HOOK_ADDRESS);
+            console.log("Pool ID:", poolId);
+
+            let sqrtPriceX96: bigint;
+            try {
+                const slot0 = await poolManager.getSlot0(poolId);
+                sqrtPriceX96 = BigInt(slot0.sqrtPriceX96.toString());
+                console.log("Current sqrtPriceX96:", sqrtPriceX96.toString());
+                console.log("Current tick:", slot0.tick.toString());
+            } catch (e) {
+                console.log("Could not get pool state, using default price");
+                sqrtPriceX96 = BigInt(2) ** BigInt(96);
+            }
+
+            // Calculate liquidity from amounts (same formula, but we'll negate it)
+            const tickLower = -600;
+            const tickUpper = 600;
+
+            const liquidityDelta = calculateLiquidityFromAmounts(
+                sqrtPriceX96,
+                tickLower,
+                tickUpper,
+                amount0Wei,
+                amount1Wei
+            );
+
+            // NEGATIVE liquidity delta for withdrawal
+            const negativeLiquidityDelta = -liquidityDelta;
+
+            console.log("Calculated negative liquidityDelta for withdrawal:", negativeLiquidityDelta.toString());
+
+            if (liquidityDelta <= BigInt(0)) {
+                throw new Error("Calculated liquidity is zero or negative. Try different amounts.");
+            }
+
+            // Create pool key and modify params
+            const poolKey = {
+                currency0: currency0,
+                currency1: currency1,
+                fee: POOL_FEE,
+                tickSpacing: TICK_SPACING,
+                hooks: CLEANPOOL_HOOK_ADDRESS,
+            };
+
+            const modifyParams = {
+                tickLower: tickLower,
+                tickUpper: tickUpper,
+                liquidityDelta: negativeLiquidityDelta, // Negative for withdrawal
+                salt: ethers.zeroPadBytes(ethers.toUtf8Bytes("UniShield"), 32),
+            };
+
+            console.log("Withdraw Pool Key:", poolKey);
+            console.log("Withdraw Modify Params:", {
+                ...modifyParams,
+                liquidityDelta: modifyParams.liquidityDelta.toString()
+            });
+
+            const router = new ethers.Contract(POOL_MODIFY_ROUTER_ADDRESS, POOL_MODIFY_ROUTER_ABI, signer);
+
+            const tx = await router.modifyLiquidity(poolKey, modifyParams, "0x", { gasLimit: 1000000 });
+            console.log("Withdraw Transaction sent:", tx.hash);
+
+            const receipt = await tx.wait();
+            console.log("Withdraw Transaction confirmed:", receipt.hash);
+
+            setWithdrawStatus('success');
+
+            // Refresh balances and pool data
+            setTimeout(() => {
+                fetchUserBalances();
+                fetchPoolData();
+            }, 2000);
+
+        } catch (error: any) {
+            console.error('Withdraw error:', error);
+            setWithdrawError(error.message || 'Withdrawal failed');
+            setWithdrawStatus('error');
+        }
+    };
+
     const closeDepositView = () => {
         setSelectedPool(null);
         setDepositAmounts({ token0Amount: '', token1Amount: '' });
         setDepositStatus('idle');
         setDepositError('');
+        setWithdrawAmounts({ token0Amount: '', token1Amount: '' });
+        setWithdrawStatus('idle');
+        setWithdrawError('');
+        setActionMode('deposit');
     };
 
     const fetchPoolData = async () => {
@@ -426,8 +570,8 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
 
                 {/* Header */}
                 <div>
-                    <h1 className="text-white text-3xl font-black">Deposit to {selectedPool.name}</h1>
-                    <p className="text-[#92c9b2] text-sm mt-1">Add liquidity to this KYC-protected pool</p>
+                    <h1 className="text-white text-3xl font-black">Manage Liquidity - {selectedPool.name}</h1>
+                    <p className="text-[#92c9b2] text-sm mt-1">Add or remove liquidity from this KYC-protected pool</p>
                 </div>
 
                 {/* KYC Check Loading */}
@@ -477,10 +621,11 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                         </p>
                     </div>
                 ) : (
-                    /* KYC Valid - Show Deposit Form */
+                    /* KYC Valid - Show Deposit/Withdraw Form */
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* Main Deposit Form */}
+                        {/* Main Form */}
                         <div className="lg:col-span-2 card p-6">
+                            {/* KYC Status Header */}
                             <div className="flex items-center gap-3 mb-6">
                                 <div className="w-10 h-10 bg-[#11d483]/20 rounded-full flex items-center justify-center">
                                     <svg className="w-5 h-5 text-[#11d483]" fill="currentColor" viewBox="0 0 24 24">
@@ -495,7 +640,38 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                 </div>
                             </div>
 
-                            {depositStatus === 'success' ? (
+                            {/* Deposit/Withdraw Tabs */}
+                            <div className="flex gap-2 mb-6 p-1 bg-[#10221a] rounded-lg">
+                                <button
+                                    onClick={() => setActionMode('deposit')}
+                                    className={`flex-1 py-2.5 px-4 rounded-md font-bold text-sm transition-all ${
+                                        actionMode === 'deposit'
+                                            ? 'bg-[#11d483] text-black'
+                                            : 'text-[#92c9b2] hover:text-white'
+                                    }`}
+                                >
+                                    <svg className="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                                    </svg>
+                                    Deposit
+                                </button>
+                                <button
+                                    onClick={() => setActionMode('withdraw')}
+                                    className={`flex-1 py-2.5 px-4 rounded-md font-bold text-sm transition-all ${
+                                        actionMode === 'withdraw'
+                                            ? 'bg-[#11d483] text-black'
+                                            : 'text-[#92c9b2] hover:text-white'
+                                    }`}
+                                >
+                                    <svg className="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                                    </svg>
+                                    Withdraw
+                                </button>
+                            </div>
+
+                            {/* Success Messages */}
+                            {depositStatus === 'success' && actionMode === 'deposit' ? (
                                 <div className="text-center py-8">
                                     <div className="w-16 h-16 bg-[#11d483]/20 rounded-full flex items-center justify-center mx-auto mb-4">
                                         <svg className="w-8 h-8 text-[#11d483]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -508,7 +684,21 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                         Back to Pools
                                     </button>
                                 </div>
-                            ) : (
+                            ) : withdrawStatus === 'success' && actionMode === 'withdraw' ? (
+                                <div className="text-center py-8">
+                                    <div className="w-16 h-16 bg-[#11d483]/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                                        <svg className="w-8 h-8 text-[#11d483]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                    </div>
+                                    <h3 className="text-xl font-bold text-white mb-2">Withdrawal Successful!</h3>
+                                    <p className="text-[#92c9b2] mb-6">Your liquidity has been removed from the pool.</p>
+                                    <button onClick={closeDepositView} className="btn-secondary py-2 px-6">
+                                        Back to Pools
+                                    </button>
+                                </div>
+                            ) : actionMode === 'deposit' ? (
+                                /* Deposit Form */
                                 <div className="space-y-4">
                                     {/* Token 0 Input (WETH) */}
                                     <div className="p-4 rounded-lg bg-[#10221a]/50 border border-[#234839]">
@@ -609,6 +799,102 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                                                 </svg>
                                                 Add Liquidity
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
+                            ) : (
+                                /* Withdraw Form */
+                                <div className="space-y-4">
+                                    {/* Info Banner */}
+                                    <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
+                                        <svg className="w-4 h-4 inline mr-2" fill="currentColor" viewBox="0 0 24 24">
+                                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                                        </svg>
+                                        Enter the approximate token amounts you want to withdraw. The actual amounts may vary slightly based on pool state.
+                                    </div>
+
+                                    {/* Token 0 Input (WETH) */}
+                                    <div className="p-4 rounded-lg bg-[#10221a]/50 border border-[#234839]">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-sm font-medium text-[#92c9b2]">Withdraw Amount</span>
+                                            <span className="text-xs text-[#92c9b2]">
+                                                Pool: {selectedPool.liquidity.token1} {selectedPool.liquidity.token1Symbol}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <input
+                                                type="number"
+                                                step="0.001"
+                                                min="0"
+                                                placeholder="0.00"
+                                                value={withdrawAmounts.token0Amount}
+                                                onChange={(e) => setWithdrawAmounts(prev => ({ ...prev, token0Amount: e.target.value }))}
+                                                className="bg-transparent border-none text-2xl font-bold text-white focus:ring-0 w-full p-0 focus:outline-none"
+                                                disabled={withdrawStatus !== 'idle'}
+                                            />
+                                            <div className="flex items-center gap-2 bg-[#234839] rounded-lg px-3 py-2">
+                                                <div className="w-6 h-6 rounded-full bg-[#627eea] flex items-center justify-center text-[8px] font-bold">
+                                                    ETH
+                                                </div>
+                                                <span className="font-bold text-sm">WETH</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Token 1 Input (USDC) */}
+                                    <div className="p-4 rounded-lg bg-[#10221a]/50 border border-[#234839]">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-sm font-medium text-[#92c9b2]">Withdraw Amount</span>
+                                            <span className="text-xs text-[#92c9b2]">
+                                                Pool: {selectedPool.liquidity.token0} {selectedPool.liquidity.token0Symbol}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <input
+                                                type="number"
+                                                step="0.01"
+                                                min="0"
+                                                placeholder="0.00"
+                                                value={withdrawAmounts.token1Amount}
+                                                onChange={(e) => setWithdrawAmounts(prev => ({ ...prev, token1Amount: e.target.value }))}
+                                                className="bg-transparent border-none text-2xl font-bold text-white focus:ring-0 w-full p-0 focus:outline-none"
+                                                disabled={withdrawStatus !== 'idle'}
+                                            />
+                                            <div className="flex items-center gap-2 bg-[#234839] rounded-lg px-3 py-2">
+                                                <div className="w-6 h-6 rounded-full bg-[#2775ca] flex items-center justify-center text-[8px] font-bold">
+                                                    USD
+                                                </div>
+                                                <span className="font-bold text-sm">USDC</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Error Message */}
+                                    {withdrawError && (
+                                        <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+                                            {withdrawError}
+                                        </div>
+                                    )}
+
+                                    {/* Withdraw Button */}
+                                    <button
+                                        onClick={handleWithdraw}
+                                        disabled={withdrawStatus !== 'idle' || !withdrawAmounts.token0Amount || !withdrawAmounts.token1Amount}
+                                        className="btn-primary w-full py-4 text-lg flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600"
+                                        style={{ backgroundColor: withdrawStatus === 'idle' ? '#ef4444' : undefined }}
+                                    >
+                                        {withdrawStatus === 'withdrawing' ? (
+                                            <>
+                                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                                Removing Liquidity...
+                                            </>
+                                        ) : (
+                                            <>
+                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                                                </svg>
+                                                Remove Liquidity
                                             </>
                                         )}
                                     </button>
@@ -788,7 +1074,7 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                                 onClick={() => setSelectedPool(pool)}
                                                 className="btn-primary py-2 px-4 text-sm"
                                             >
-                                                Deposit
+                                                Manage
                                             </button>
                                         </td>
                                     </tr>
