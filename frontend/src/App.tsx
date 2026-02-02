@@ -9,20 +9,13 @@ import {
 import { ethers } from "ethers";
 import { supportedChains, SEPOLIA_CHAIN_ID, ARBITRUM_SEPOLIA_CHAIN_ID } from "./config/privyConfig";
 import { normalizeChainId } from "./utils/normalizeChainId";
-import KYCVerification, { type DepositAmounts } from "./components/KYCVerification";
+import KYCVerification from "./components/KYCVerification";
 import PoolsPage from "./components/PoolsPage";
 import CompliancePage from "./components/CompliancePage";
 import GovernancePage from "./components/GovernancePage";
 import Header from "./components/Header";
 import {
-  POOL_MANAGER_ADDRESS,
-  POOL_MODIFY_ROUTER_ADDRESS,
   CLEANPOOL_HOOK_ADDRESS,
-  POOL_FEE,
-  TICK_SPACING,
-  ERC20_ABI,
-  POOL_MODIFY_ROUTER_ABI,
-  getSortedTokens
 } from './config/contract';
 
 // Hook ABI (only the functions we need)
@@ -54,15 +47,16 @@ export interface KYCData {
 
 export interface AttestationResult {
   success: boolean;
-  user_address: string;
-  expiry: number;
-  signature: {
+  user_address?: string;
+  expiry?: number;
+  signature?: {
     r: string;
     s: string;
     v: number;
   };
-  message_hash: string;
-  signer_address: string;
+  message_hash?: string;
+  signer_address?: string;
+  error?: string;
 }
 
 export default function App() {
@@ -99,12 +93,6 @@ export default function App() {
     null
   );
   const [error, setError] = useState<string>("");
-
-  // Deposit amounts state
-  const [depositAmounts, setDepositAmounts] = useState<DepositAmounts>({
-    token0Amount: "",
-    token1Amount: "",
-  });
 
   // On-chain KYC status
   const [isKYCRegistered, setIsKYCRegistered] = useState<boolean>(false);
@@ -379,12 +367,36 @@ export default function App() {
 
       // Validate the response
       if (!teeOutput.success) {
-        throw new Error(teeOutput.error || "TEE verification failed");
+        throw new Error((teeOutput as any).error || "TEE verification failed");
       }
 
       setAttestation(teeOutput);
+      setStatusMessage("Registering KYC on-chain...");
+
+      // Step 5: Register KYC on-chain
+      // Switch to Sepolia for on-chain registration
+      const sepoliaChainId = SEPOLIA_CHAIN_ID;
+      const chainNow = normalizeChainId(wallet.chainId);
+      if (chainNow !== sepoliaChainId) {
+        setStatusMessage("Switching to Sepolia for registration...");
+        await wallet.switchChain(sepoliaChainId);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      const sepoliaProvider = await wallet.getEthereumProvider();
+      const ethersProvider = new ethers.BrowserProvider(sepoliaProvider);
+      const signer = await ethersProvider.getSigner();
+
+      await registerKYCOnChain(teeOutput, signer);
+
+      // Update KYC status
+      setIsKYCRegistered(true);
+      if (teeOutput.expiry) {
+        setKycExpiryDate(new Date(teeOutput.expiry * 1000));
+      }
+
       setVerificationStatus("VERIFIED");
-      setStatusMessage("KYC verification complete!");
+      setStatusMessage("KYC verification and registration complete!");
 
     } catch (err: any) {
       console.error("Verification error:", err);
@@ -399,6 +411,10 @@ export default function App() {
     attestation: AttestationResult,
     signer: ethers.Signer
   ): Promise<boolean> => {
+    if (!attestation.expiry || !attestation.signature) {
+      throw new Error("Invalid attestation: missing expiry or signature");
+    }
+
     const hook = new ethers.Contract(
       CLEANPOOL_HOOK_ADDRESS,
       HOOK_ABI,
@@ -434,176 +450,6 @@ export default function App() {
     return true;
   };
 
-  // Deposit liquidity (works for both newly verified and already KYC'd users)
-  const depositLiquidity = async () => {
-    // Allow if user has attestation (just verified) OR is already registered on-chain
-    if ((!attestation && !isKYCRegistered) || !wallet) return;
-
-    // Validate deposit amounts
-    const amount0 = parseFloat(depositAmounts.token0Amount);
-    const amount1 = parseFloat(depositAmounts.token1Amount);
-    if (isNaN(amount0) || isNaN(amount1) || amount0 <= 0 || amount1 <= 0) {
-      setError("Please enter valid deposit amounts");
-      return;
-    }
-
-    setVerificationStatus("DEPOSITING");
-    setStatusMessage("Preparing transaction...");
-
-    try {
-      // Step 0: Switch to Sepolia (where the hook is deployed)
-      const currentChainId = normalizeChainId(wallet.chainId);
-      if (currentChainId !== SEPOLIA_CHAIN_ID) {
-        setStatusMessage("Switching to Sepolia network...");
-        try {
-          await wallet.switchChain(SEPOLIA_CHAIN_ID);
-          await new Promise(resolve => setTimeout(resolve, 1000));
-        } catch (switchError: any) {
-          console.error("Failed to switch to Sepolia:", switchError);
-          throw new Error("Please switch to Sepolia network manually");
-        }
-      }
-
-      const provider = await wallet.getEthereumProvider();
-      const ethersProvider = new ethers.BrowserProvider(provider);
-      const signer = await ethersProvider.getSigner();
-
-      // Step 1: Register KYC on-chain (only if we have a fresh attestation)
-      if (attestation && !isKYCRegistered) {
-        setStatusMessage("Registering KYC on-chain...");
-        await registerKYCOnChain(attestation, signer);
-      } else {
-        setStatusMessage("KYC already registered...");
-      }
-
-      // Step 2: Get sorted tokens first (Uniswap v4 requires currency0 < currency1)
-      const { currency0, currency1 } = getSortedTokens();
-      console.log("Sorted tokens - currency0:", currency0, "currency1:", currency1);
-
-      // Approve tokens to BOTH the router AND the PoolManager
-      // (PoolModifyLiquidityTest uses the PoolManager for settlement)
-      setStatusMessage("Approving tokens...");
-
-      const token0Contract = new ethers.Contract(currency0, ERC20_ABI, signer);
-      const token1Contract = new ethers.Contract(currency1, ERC20_ABI, signer);
-
-      const token0Decimals = await token0Contract.decimals();
-      const token1Decimals = await token1Contract.decimals();
-      const token0Symbol = await token0Contract.symbol();
-      const token1Symbol = await token1Contract.symbol();
-
-      console.log("Token0:", token0Symbol, "decimals:", token0Decimals);
-      console.log("Token1:", token1Symbol, "decimals:", token1Decimals);
-
-      // Determine amounts based on which token is which
-      // currency0 is USDC (6 decimals), currency1 is WETH (18 decimals)
-      let amount0Wei, amount1Wei;
-      if (token0Symbol === "USDC") {
-        amount0Wei = ethers.parseUnits(depositAmounts.token1Amount, token0Decimals); // USDC amount
-        amount1Wei = ethers.parseEther(depositAmounts.token0Amount); // WETH amount
-      } else {
-        amount0Wei = ethers.parseEther(depositAmounts.token0Amount);
-        amount1Wei = ethers.parseUnits(depositAmounts.token1Amount, token1Decimals);
-      }
-
-      console.log("Amount0 (wei):", amount0Wei.toString());
-      console.log("Amount1 (wei):", amount1Wei.toString());
-
-      // Check balances
-      const balance0 = await token0Contract.balanceOf(await signer.getAddress());
-      const balance1 = await token1Contract.balanceOf(await signer.getAddress());
-      console.log("Balance0:", balance0.toString(), "needed:", amount0Wei.toString());
-      console.log("Balance1:", balance1.toString(), "needed:", amount1Wei.toString());
-
-      // Approve to BOTH router AND PoolManager (v4 needs approvals to multiple contracts)
-      const maxApproval = ethers.MaxUint256;
-
-      // Force fresh approvals - don't rely on allowance checks
-      setStatusMessage(`Approving ${token0Symbol} for router...`);
-      console.log(`Approving ${token0Symbol} for router...`);
-      const approveTx0Router = await token0Contract.approve(POOL_MODIFY_ROUTER_ADDRESS, maxApproval);
-      await approveTx0Router.wait();
-      console.log(token0Symbol, "approved for router");
-
-      setStatusMessage(`Approving ${token0Symbol} for PoolManager...`);
-      console.log(`Approving ${token0Symbol} for PoolManager...`);
-      const approveTx0PM = await token0Contract.approve(POOL_MANAGER_ADDRESS, maxApproval);
-      await approveTx0PM.wait();
-      console.log(token0Symbol, "approved for PoolManager");
-
-      setStatusMessage(`Approving ${token1Symbol} for router...`);
-      console.log(`Approving ${token1Symbol} for router...`);
-      const approveTx1Router = await token1Contract.approve(POOL_MODIFY_ROUTER_ADDRESS, maxApproval);
-      await approveTx1Router.wait();
-      console.log(token1Symbol, "approved for router");
-
-      setStatusMessage(`Approving ${token1Symbol} for PoolManager...`);
-      console.log(`Approving ${token1Symbol} for PoolManager...`);
-      const approveTx1PM = await token1Contract.approve(POOL_MANAGER_ADDRESS, maxApproval);
-      await approveTx1PM.wait();
-      console.log(token1Symbol, "approved for PoolManager");
-
-      // Step 3: Add liquidity via the router
-      setStatusMessage("Adding liquidity to pool...");
-
-      // Create the pool key
-      const poolKey = {
-        currency0: currency0,
-        currency1: currency1,
-        fee: POOL_FEE,
-        tickSpacing: TICK_SPACING,
-        hooks: CLEANPOOL_HOOK_ADDRESS,
-      };
-
-      // Create the liquidity params
-      // Using a smaller tick range for testing
-      const tickLower = -600; // Closer to current tick (0)
-      const tickUpper = 600;
-
-      // Use an EXTREMELY small liquidity amount - Uniswap v4 liquidity units can require lots of tokens
-      // 1e6 worked, 1e10 failed - trying 1e8 as a middle ground
-      const liquidityDelta = BigInt(1e8); // Testing larger liquidity
-
-      console.log("Using liquidityDelta:", liquidityDelta.toString());
-
-      const modifyParams = {
-        tickLower: tickLower,
-        tickUpper: tickUpper,
-        liquidityDelta: liquidityDelta,
-        salt: ethers.zeroPadBytes(ethers.toUtf8Bytes("UniShield"), 32),
-      };
-
-      console.log("Pool Key:", poolKey);
-      console.log("Modify Params:", modifyParams);
-
-      // Call the router
-      const router = new ethers.Contract(
-        POOL_MODIFY_ROUTER_ADDRESS,
-        POOL_MODIFY_ROUTER_ABI,
-        signer
-      );
-
-      const tx = await router.modifyLiquidity(
-        poolKey,
-        modifyParams,
-        "0x", // Empty hook data
-        { gasLimit: 500000 }
-      );
-
-      setStatusMessage("Waiting for confirmation...");
-      const receipt = await tx.wait();
-      console.log("Liquidity added! Tx:", receipt.hash);
-
-      setVerificationStatus("COMPLETED");
-      setStatusMessage("Liquidity deposited successfully!");
-
-    } catch (err: any) {
-      console.error("Deposit error:", err);
-      setError(err.message || "Deposit failed");
-      setVerificationStatus("ERROR");
-    }
-  };
-
   return (
     <div className="min-h-screen bg-[#10221a] text-white flex flex-col">
       <Header
@@ -623,7 +469,12 @@ export default function App() {
         <div className="max-w-[1200px] mx-auto">
           {/* Render page based on navigation */}
           {currentPage === 'pools' ? (
-            <PoolsPage />
+            <PoolsPage
+              address={address}
+              isConnected={isConnected}
+              wallet={wallet}
+              onNavigateToKYC={() => setCurrentPage('dashboard')}
+            />
           ) : currentPage === 'compliance' ? (
             <CompliancePage />
           ) : currentPage === 'governance' ? (
@@ -636,7 +487,7 @@ export default function App() {
                 <span className="text-[#92c9b2] text-sm font-medium">Dashboard</span>
                 <span className="text-[#92c9b2] text-sm font-medium">/</span>
                 <span className="text-white text-sm font-medium">
-                  {isKYCRegistered || verificationStatus === "KYC_REGISTERED" ? "Add Liquidity" : "Compliance Onboarding"}
+                  {isKYCRegistered || verificationStatus === "KYC_REGISTERED" || verificationStatus === "VERIFIED" ? "KYC Status" : "Compliance Onboarding"}
                 </span>
               </div>
 
@@ -644,11 +495,11 @@ export default function App() {
               <div className="flex flex-wrap justify-between gap-3 pb-8">
                 <div className="flex min-w-72 flex-col gap-2">
                   <p className="text-white text-4xl font-black leading-tight tracking-tight">
-                    {isKYCRegistered || verificationStatus === "KYC_REGISTERED" ? "Add Liquidity" : "Compliance Onboarding"}
+                    {isKYCRegistered || verificationStatus === "KYC_REGISTERED" || verificationStatus === "VERIFIED" ? "KYC Status" : "Compliance Onboarding"}
                   </p>
                   <p className="text-[#92c9b2] text-base font-normal leading-normal">
-                    {isKYCRegistered || verificationStatus === "KYC_REGISTERED"
-                      ? "Institutional-grade privacy-preserving liquidity provision via TEE signatures."
+                    {isKYCRegistered || verificationStatus === "KYC_REGISTERED" || verificationStatus === "VERIFIED"
+                      ? "Your identity has been verified. Access KYC-protected liquidity pools."
                       : "Establish your identity and asset provenance for private liquidity access."}
                   </p>
                 </div>
@@ -682,13 +533,10 @@ export default function App() {
                   verificationStatus={verificationStatus}
                   statusMessage={statusMessage}
                   error={error}
-                  attestation={attestation}
-                  depositAmounts={depositAmounts}
-                  setDepositAmounts={setDepositAmounts}
                   isKYCRegistered={isKYCRegistered}
                   kycExpiryDate={kycExpiryDate}
                   onStartVerification={startVerification}
-                  onDeposit={depositLiquidity}
+                  onNavigateToPools={() => setCurrentPage('pools')}
                   onReset={resetState}
                 />
               )}

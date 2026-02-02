@@ -7,18 +7,10 @@ import {Hooks} from "@uniswap/v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "@uniswap/v4-core/src/types/PoolId.sol";
 import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
-import {
-    BeforeSwapDelta,
-    BeforeSwapDeltaLibrary
-} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "@uniswap/v4-core/src/types/BeforeSwapDelta.sol";
 import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
-import {
-    MessageHashUtils
-} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
-import {
-    ModifyLiquidityParams,
-    SwapParams
-} from "@uniswap/v4-core/src/types/PoolOperation.sol";
+import {MessageHashUtils} from "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
+import {ModifyLiquidityParams, SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 
 /**
  * @title UniShieldHook
@@ -59,38 +51,29 @@ contract UniShieldHook is BaseHook {
         _;
     }
 
-    constructor(
-        IPoolManager _poolManager,
-        address _trustedSigner
-    ) BaseHook(_poolManager) {
-        owner = msg.sender;
+    constructor(IPoolManager _poolManager, address _trustedSigner, address _owner) BaseHook(_poolManager) {
+        owner = _owner;
         trustedSigner = _trustedSigner;
     }
 
     /// @notice Define which hook functions this contract implements
-    function getHookPermissions()
-        public
-        pure
-        override
-        returns (Hooks.Permissions memory)
-    {
-        return
-            Hooks.Permissions({
-                beforeInitialize: false,
-                afterInitialize: false,
-                beforeAddLiquidity: true, // Check KYC before adding liquidity
-                afterAddLiquidity: false,
-                beforeRemoveLiquidity: false, // Allow anyone to remove (they already passed KYC to add)
-                afterRemoveLiquidity: false,
-                beforeSwap: true, // Check KYC before swapping
-                afterSwap: false,
-                beforeDonate: false,
-                afterDonate: false,
-                beforeSwapReturnDelta: false,
-                afterSwapReturnDelta: false,
-                afterAddLiquidityReturnDelta: false,
-                afterRemoveLiquidityReturnDelta: false
-            });
+    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
+        return Hooks.Permissions({
+            beforeInitialize: false,
+            afterInitialize: false,
+            beforeAddLiquidity: true, // Check KYC before adding liquidity
+            afterAddLiquidity: false,
+            beforeRemoveLiquidity: false, // Allow anyone to remove (they already passed KYC to add)
+            afterRemoveLiquidity: false,
+            beforeSwap: true, // Check KYC before swapping
+            afterSwap: false,
+            beforeDonate: false,
+            afterDonate: false,
+            beforeSwapReturnDelta: false,
+            afterSwapReturnDelta: false,
+            afterAddLiquidityReturnDelta: false,
+            afterRemoveLiquidityReturnDelta: false
+        });
     }
 
     /**
@@ -100,12 +83,7 @@ contract UniShieldHook is BaseHook {
      * @param r Signature component
      * @param s Signature component
      */
-    function registerKYC(
-        uint256 expiry,
-        uint8 v,
-        bytes32 r,
-        bytes32 s
-    ) external {
+    function registerKYC(uint256 expiry, uint8 v, bytes32 r, bytes32 s) external {
         // Check attestation hasn't already expired
         if (expiry <= block.timestamp) {
             revert ExpiredAttestation();
@@ -160,12 +138,12 @@ contract UniShieldHook is BaseHook {
 
     // ============ Hook Implementation ============
 
-    function _beforeSwap(
-        address,
-        PoolKey calldata,
-        SwapParams calldata,
-        bytes calldata
-    ) internal view override returns (bytes4, BeforeSwapDelta, uint24) {
+    function _beforeSwap(address, PoolKey calldata, SwapParams calldata, bytes calldata)
+        internal
+        view
+        override
+        returns (bytes4, BeforeSwapDelta, uint24)
+    {
         // NOTE: Using tx.origin to get the actual user, not the router
         address user = tx.origin;
 
@@ -177,19 +155,15 @@ contract UniShieldHook is BaseHook {
             revert KYCExpired();
         }
 
-        return (
-            BaseHook.beforeSwap.selector,
-            BeforeSwapDeltaLibrary.ZERO_DELTA,
-            0
-        );
+        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
-    function _beforeAddLiquidity(
-        address,
-        PoolKey calldata,
-        ModifyLiquidityParams calldata,
-        bytes calldata
-    ) internal view override returns (bytes4) {
+    function _beforeAddLiquidity(address, PoolKey calldata, ModifyLiquidityParams calldata, bytes calldata)
+        internal
+        view
+        override
+        returns (bytes4)
+    {
         // NOTE: Using tx.origin to get the actual user, not the router
         // In production, consider passing user address via hookData for security
         address user = tx.origin;

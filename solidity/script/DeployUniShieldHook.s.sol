@@ -26,6 +26,8 @@ contract DeployUniShieldHook is Script {
     // Default trusted signer (Hardhat account #0 - FOR TESTING ONLY)
     address constant DEFAULT_TRUSTED_SIGNER = 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266;
 
+    address constant OWNER = 0x38DbEdE9160b40C7C66840e7337Ab377154B5946;
+
     function run() external {
         // Get configuration from environment
         address poolManager = vm.envOr("POOL_MANAGER_ADDRESS", address(0));
@@ -44,17 +46,13 @@ contract DeployUniShieldHook is Script {
         uint160 flags = uint160(Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG);
 
         // Prepare constructor args
-        bytes memory constructorArgs = abi.encode(IPoolManager(poolManager), trustedSigner);
+        bytes memory constructorArgs = abi.encode(IPoolManager(poolManager), trustedSigner, OWNER);
 
         // Mine for a valid hook address using the CREATE2 Deployer Proxy
         // Foundry routes all CREATE2 deployments through this proxy
         console.log("Mining for valid hook address...");
-        (address hookAddress, bytes32 salt) = HookMiner.find(
-            CREATE2_DEPLOYER,
-            flags,
-            type(UniShieldHook).creationCode,
-            constructorArgs
-        );
+        (address hookAddress, bytes32 salt) =
+            HookMiner.find(CREATE2_DEPLOYER, flags, type(UniShieldHook).creationCode, constructorArgs);
 
         console.log("Found valid address:", hookAddress);
         console.log("Salt:", vm.toString(salt));
@@ -64,10 +62,7 @@ contract DeployUniShieldHook is Script {
         vm.startBroadcast();
 
         // Deploy the hook using CREATE2 (Foundry will route through CREATE2_DEPLOYER)
-        UniShieldHook hook = new UniShieldHook{salt: salt}(
-            IPoolManager(poolManager),
-            trustedSigner
-        );
+        UniShieldHook hook = new UniShieldHook{salt: salt}(IPoolManager(poolManager), trustedSigner, OWNER);
 
         vm.stopBroadcast();
 
