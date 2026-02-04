@@ -12,6 +12,8 @@ import {
     getSortedTokens,
     computePoolId,
     calculateLiquidityFromAmounts,
+    calculateAmount0FromAmount1,
+    calculateAmount1FromAmount0,
 } from '../config/contract';
 
 // Hook ABI for KYC check
@@ -98,15 +100,38 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
     const [withdrawStatus, setWithdrawStatus] = useState<'idle' | 'withdrawing' | 'success' | 'error'>('idle');
     const [withdrawError, setWithdrawError] = useState<string>('');
 
+    // Pool price state for auto-calculation
+    const [poolPrice, setPoolPrice] = useState<{
+        sqrtPriceX96: bigint | null;
+        decimals0: number;
+        decimals1: number;
+        symbol0: string;
+        symbol1: string;
+    }>({
+        sqrtPriceX96: null,
+        decimals0: 18,
+        decimals1: 18,
+        symbol0: '',
+        symbol1: '',
+    });
+
+    // Tick range for liquidity position
+    // For correct price (2500 cUSD per cETH), tick ≈ 78244
+    // Range covers approximately $1000 to $5000 ETH
+    // Ticks must be divisible by TICK_SPACING (10)
+    const TICK_LOWER = 69070; // ~$1000 ETH
+    const TICK_UPPER = 85180; // ~$5000 ETH
+
     useEffect(() => {
         fetchPoolData();
     }, []);
 
-    // Check KYC status when a pool is selected
+    // Check KYC status and fetch pool price when a pool is selected
     useEffect(() => {
         if (selectedPool && address) {
             checkKYCStatus();
             fetchUserBalances();
+            fetchPoolPrice();
         }
     }, [selectedPool, address]);
 
@@ -165,13 +190,165 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
         }
     };
 
+    // Default sqrtPriceX96 for 1 ETH = $2500
+    // cETH is currency0, cUSD is currency1, price = 2500
+    // sqrtPriceX96 = sqrt(2500) * 2^96 = 50 * 2^96
+    const DEFAULT_SQRT_PRICE_X96 = BigInt("3961408125713216879677197516800");
+
+    const fetchPoolPrice = async () => {
+        try {
+            const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC);
+            const { currency0, currency1 } = getSortedTokens();
+
+            const token0Contract = new ethers.Contract(currency0, ERC20_ABI, provider);
+            const token1Contract = new ethers.Contract(currency1, ERC20_ABI, provider);
+            const poolManager = new ethers.Contract(POOL_MANAGER_ADDRESS, POOL_MANAGER_ABI, provider);
+
+            const poolId = computePoolId(currency0, currency1, POOL_FEE, TICK_SPACING, CLEANPOOL_HOOK_ADDRESS);
+
+            // Fetch token info first
+            const [decimals0, decimals1, symbol0, symbol1] = await Promise.all([
+                token0Contract.decimals(),
+                token1Contract.decimals(),
+                token0Contract.symbol(),
+                token1Contract.symbol(),
+            ]);
+
+            // Try to fetch pool state
+            let sqrtPriceX96: bigint;
+            try {
+                const slot0 = await poolManager.getSlot0(poolId);
+                sqrtPriceX96 = BigInt(slot0.sqrtPriceX96.toString());
+                console.log("Pool price fetched - sqrtPriceX96:", sqrtPriceX96.toString());
+                console.log("Current tick:", slot0.tick.toString());
+            } catch (e) {
+                console.log("Pool not found or getSlot0 failed, using default $2500 ETH price");
+                sqrtPriceX96 = DEFAULT_SQRT_PRICE_X96;
+            }
+
+            setPoolPrice({
+                sqrtPriceX96,
+                decimals0: Number(decimals0),
+                decimals1: Number(decimals1),
+                symbol0,
+                symbol1,
+            });
+        } catch (error) {
+            console.error('Error fetching pool price:', error);
+            // Set default $2500 ETH price if fetch fails completely
+            setPoolPrice(prev => ({
+                ...prev,
+                sqrtPriceX96: DEFAULT_SQRT_PRICE_X96,
+            }));
+        }
+    };
+
+    // Auto-calculate paired amount when token0 amount changes
+    const handleToken0AmountChange = (value: string, isDeposit: boolean) => {
+        if (isDeposit) {
+            setDepositAmounts(prev => ({ ...prev, token0Amount: value }));
+        } else {
+            setWithdrawAmounts(prev => ({ ...prev, token0Amount: value }));
+        }
+
+        if (!value || !poolPrice.sqrtPriceX96) {
+            if (isDeposit) {
+                setDepositAmounts(prev => ({ ...prev, token1Amount: '' }));
+            } else {
+                setWithdrawAmounts(prev => ({ ...prev, token1Amount: '' }));
+            }
+            return;
+        }
+
+        try {
+            const amount0 = parseFloat(value);
+            if (isNaN(amount0) || amount0 <= 0) return;
+
+            console.log("handleToken0AmountChange - symbol0:", poolPrice.symbol0);
+            console.log("handleToken0AmountChange - sqrtPriceX96:", poolPrice.sqrtPriceX96.toString());
+            console.log("handleToken0AmountChange - TICK_LOWER:", TICK_LOWER, "TICK_UPPER:", TICK_UPPER);
+
+            // User entered token0 amount, calculate token1 amount
+            const amount0Wei = ethers.parseUnits(amount0.toString(), poolPrice.decimals0);
+            console.log("Token0 wei:", amount0Wei.toString());
+
+            const calculatedAmount = calculateAmount1FromAmount0(
+                poolPrice.sqrtPriceX96,
+                TICK_LOWER,
+                TICK_UPPER,
+                amount0Wei
+            );
+            console.log("Calculated token1 amount (wei):", calculatedAmount.toString());
+
+            const amount1Formatted = ethers.formatUnits(calculatedAmount, poolPrice.decimals1);
+            console.log("Token1 formatted:", amount1Formatted);
+
+            if (isDeposit) {
+                setDepositAmounts(prev => ({ ...prev, token1Amount: parseFloat(amount1Formatted).toFixed(2) }));
+            } else {
+                setWithdrawAmounts(prev => ({ ...prev, token1Amount: parseFloat(amount1Formatted).toFixed(2) }));
+            }
+        } catch (error) {
+            console.error('Error calculating paired amount:', error);
+        }
+    };
+
+    // Auto-calculate paired amount when token1 amount changes
+    const handleToken1AmountChange = (value: string, isDeposit: boolean) => {
+        if (isDeposit) {
+            setDepositAmounts(prev => ({ ...prev, token1Amount: value }));
+        } else {
+            setWithdrawAmounts(prev => ({ ...prev, token1Amount: value }));
+        }
+
+        if (!value || !poolPrice.sqrtPriceX96) {
+            if (isDeposit) {
+                setDepositAmounts(prev => ({ ...prev, token0Amount: '' }));
+            } else {
+                setWithdrawAmounts(prev => ({ ...prev, token0Amount: '' }));
+            }
+            return;
+        }
+
+        try {
+            const amount1 = parseFloat(value);
+            if (isNaN(amount1) || amount1 <= 0) return;
+
+            console.log("handleToken1AmountChange - symbol1:", poolPrice.symbol1);
+            console.log("handleToken1AmountChange - sqrtPriceX96:", poolPrice.sqrtPriceX96.toString());
+
+            // User entered token1 amount, calculate token0 amount
+            const amount1Wei = ethers.parseUnits(amount1.toString(), poolPrice.decimals1);
+            console.log("Token1 wei:", amount1Wei.toString());
+
+            const calculatedAmount = calculateAmount0FromAmount1(
+                poolPrice.sqrtPriceX96,
+                TICK_LOWER,
+                TICK_UPPER,
+                amount1Wei
+            );
+            console.log("Calculated token0 amount (wei):", calculatedAmount.toString());
+
+            const amount0Formatted = ethers.formatUnits(calculatedAmount, poolPrice.decimals0);
+            console.log("Token0 formatted:", amount0Formatted);
+
+            if (isDeposit) {
+                setDepositAmounts(prev => ({ ...prev, token0Amount: parseFloat(amount0Formatted).toFixed(6) }));
+            } else {
+                setWithdrawAmounts(prev => ({ ...prev, token0Amount: parseFloat(amount0Formatted).toFixed(6) }));
+            }
+        } catch (error) {
+            console.error('Error calculating paired amount:', error);
+        }
+    };
+
     const handleDeposit = async () => {
         if (!wallet || !selectedPool || !address) return;
 
-        const wethAmount = parseFloat(depositAmounts.token0Amount);
-        const usdcAmount = parseFloat(depositAmounts.token1Amount);
+        const token0Amount = parseFloat(depositAmounts.token0Amount);
+        const token1Amount = parseFloat(depositAmounts.token1Amount);
 
-        if (isNaN(wethAmount) || isNaN(usdcAmount) || wethAmount <= 0 || usdcAmount <= 0) {
+        if (isNaN(token0Amount) || isNaN(token1Amount) || token0Amount <= 0 || token1Amount <= 0) {
             setDepositError('Please enter valid deposit amounts');
             return;
         }
@@ -199,18 +376,9 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
             console.log("Token0 (currency0):", symbol0, "decimals:", decimals0);
             console.log("Token1 (currency1):", symbol1, "decimals:", decimals1);
 
-            // currency0 is the smaller address, currency1 is the larger
-            // We need to map user inputs (WETH amount, USDC amount) to the correct token order
-            let amount0Wei: bigint, amount1Wei: bigint;
-            if (symbol0 === 'USDC' || symbol0 === 'cUSD') {
-                // currency0 = USDC, currency1 = WETH
-                amount0Wei = ethers.parseUnits(usdcAmount.toString(), decimals0);
-                amount1Wei = ethers.parseUnits(wethAmount.toString(), decimals1);
-            } else {
-                // currency0 = WETH, currency1 = USDC
-                amount0Wei = ethers.parseUnits(wethAmount.toString(), decimals0);
-                amount1Wei = ethers.parseUnits(usdcAmount.toString(), decimals1);
-            }
+            // token0Amount corresponds to currency0, token1Amount corresponds to currency1
+            const amount0Wei = ethers.parseUnits(token0Amount.toString(), decimals0);
+            const amount1Wei = ethers.parseUnits(token1Amount.toString(), decimals1);
 
             console.log("Amount0 (wei):", amount0Wei.toString());
             console.log("Amount1 (wei):", amount1Wei.toString());
@@ -251,13 +419,10 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
             }
 
             // Calculate liquidity from amounts
-            const tickLower = -600;
-            const tickUpper = 600;
-
             const liquidityDelta = calculateLiquidityFromAmounts(
                 sqrtPriceX96,
-                tickLower,
-                tickUpper,
+                TICK_LOWER,
+                TICK_UPPER,
                 amount0Wei,
                 amount1Wei
             );
@@ -279,8 +444,8 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
             };
 
             const modifyParams = {
-                tickLower: tickLower,
-                tickUpper: tickUpper,
+                tickLower: TICK_LOWER,
+                tickUpper: TICK_UPPER,
                 liquidityDelta: liquidityDelta,
                 salt: ethers.zeroPadBytes(ethers.toUtf8Bytes("UniShield"), 32),
             };
@@ -314,13 +479,103 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
         }
     };
 
+    // Withdraw all liquidity from the pool
+    const handleWithdrawAll = async () => {
+        if (!wallet || !selectedPool || !address) return;
+
+        setWithdrawStatus('withdrawing');
+        setWithdrawError('');
+
+        try {
+            const provider = await wallet.getEthereumProvider();
+            const ethersProvider = new ethers.BrowserProvider(provider);
+            const signer = await ethersProvider.getSigner();
+
+            const { currency0, currency1 } = getSortedTokens();
+
+            // Get pool state
+            const poolManager = new ethers.Contract(POOL_MANAGER_ADDRESS, POOL_MANAGER_ABI, ethersProvider);
+            const poolId = computePoolId(currency0, currency1, POOL_FEE, TICK_SPACING, CLEANPOOL_HOOK_ADDRESS);
+
+            const slot0 = await poolManager.getSlot0(poolId);
+            const sqrtPriceX96 = BigInt(slot0.sqrtPriceX96.toString());
+            console.log("WithdrawAll - sqrtPriceX96:", sqrtPriceX96.toString());
+
+            // Get token contracts to read pool balances
+            const token0Contract = new ethers.Contract(currency0, ERC20_ABI, ethersProvider);
+            const token1Contract = new ethers.Contract(currency1, ERC20_ABI, ethersProvider);
+
+            const [balance0, balance1] = await Promise.all([
+                token0Contract.balanceOf(POOL_MANAGER_ADDRESS),
+                token1Contract.balanceOf(POOL_MANAGER_ADDRESS),
+            ]);
+
+            console.log("Pool balance0:", balance0.toString());
+            console.log("Pool balance1:", balance1.toString());
+
+            // Calculate max liquidity from pool balances
+            const maxLiquidity = calculateLiquidityFromAmounts(
+                sqrtPriceX96,
+                TICK_LOWER,
+                TICK_UPPER,
+                BigInt(balance0.toString()),
+                BigInt(balance1.toString())
+            );
+
+            console.log("Calculated max liquidity:", maxLiquidity.toString());
+
+            // Use negative liquidity delta for withdrawal
+            const negativeLiquidityDelta = -maxLiquidity;
+
+            const poolKey = {
+                currency0: currency0,
+                currency1: currency1,
+                fee: POOL_FEE,
+                tickSpacing: TICK_SPACING,
+                hooks: CLEANPOOL_HOOK_ADDRESS,
+            };
+
+            const modifyParams = {
+                tickLower: TICK_LOWER,
+                tickUpper: TICK_UPPER,
+                liquidityDelta: negativeLiquidityDelta,
+                salt: ethers.zeroPadBytes(ethers.toUtf8Bytes("UniShield"), 32),
+            };
+
+            console.log("WithdrawAll Modify Params:", {
+                ...modifyParams,
+                liquidityDelta: modifyParams.liquidityDelta.toString()
+            });
+
+            const router = new ethers.Contract(POOL_MODIFY_ROUTER_ADDRESS, POOL_MODIFY_ROUTER_ABI, signer);
+
+            const tx = await router.modifyLiquidity(poolKey, modifyParams, "0x", { gasLimit: 1000000 });
+            console.log("WithdrawAll Transaction sent:", tx.hash);
+
+            const receipt = await tx.wait();
+            console.log("WithdrawAll Transaction confirmed:", receipt.hash);
+
+            setWithdrawStatus('success');
+
+            setTimeout(() => {
+                fetchUserBalances();
+                fetchPoolData();
+            }, 2000);
+
+        } catch (error: any) {
+            console.error('WithdrawAll error:', error);
+            setWithdrawError(error.message || 'Withdrawal failed');
+            setWithdrawStatus('error');
+        }
+    };
+
     const handleWithdraw = async () => {
         if (!wallet || !selectedPool || !address) return;
 
-        const wethAmount = parseFloat(withdrawAmounts.token0Amount);
-        const usdcAmount = parseFloat(withdrawAmounts.token1Amount);
+        const token0Amount = parseFloat(withdrawAmounts.token0Amount);
+        const token1Amount = parseFloat(withdrawAmounts.token1Amount);
 
-        if (isNaN(wethAmount) || isNaN(usdcAmount) || wethAmount <= 0 || usdcAmount <= 0) {
+        if (isNaN(token0Amount) || isNaN(token1Amount) || token0Amount <= 0 || token1Amount <= 0) {
             setWithdrawError('Please enter valid withdrawal amounts');
             return;
         }
@@ -348,17 +603,9 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
             console.log("Withdrawing - Token0 (currency0):", symbol0, "decimals:", decimals0);
             console.log("Withdrawing - Token1 (currency1):", symbol1, "decimals:", decimals1);
 
-            // Map user inputs to the correct token order
-            let amount0Wei: bigint, amount1Wei: bigint;
-            if (symbol0 === 'USDC' || symbol0 === 'cUSD') {
-                // currency0 = USDC, currency1 = WETH
-                amount0Wei = ethers.parseUnits(usdcAmount.toString(), decimals0);
-                amount1Wei = ethers.parseUnits(wethAmount.toString(), decimals1);
-            } else {
-                // currency0 = WETH, currency1 = USDC
-                amount0Wei = ethers.parseUnits(wethAmount.toString(), decimals0);
-                amount1Wei = ethers.parseUnits(usdcAmount.toString(), decimals1);
-            }
+            // token0Amount corresponds to currency0, token1Amount corresponds to currency1
+            const amount0Wei = ethers.parseUnits(token0Amount.toString(), decimals0);
+            const amount1Wei = ethers.parseUnits(token1Amount.toString(), decimals1);
 
             console.log("Withdraw Amount0 (wei):", amount0Wei.toString());
             console.log("Withdraw Amount1 (wei):", amount1Wei.toString());
@@ -380,13 +627,10 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
             }
 
             // Calculate liquidity from amounts (same formula, but we'll negate it)
-            const tickLower = -600;
-            const tickUpper = 600;
-
             const liquidityDelta = calculateLiquidityFromAmounts(
                 sqrtPriceX96,
-                tickLower,
-                tickUpper,
+                TICK_LOWER,
+                TICK_UPPER,
                 amount0Wei,
                 amount1Wei
             );
@@ -410,8 +654,8 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
             };
 
             const modifyParams = {
-                tickLower: tickLower,
-                tickUpper: tickUpper,
+                tickLower: TICK_LOWER,
+                tickUpper: TICK_UPPER,
                 liquidityDelta: negativeLiquidityDelta, // Negative for withdrawal
                 salt: ethers.zeroPadBytes(ethers.toUtf8Bytes("UniShield"), 32),
             };
@@ -700,47 +944,12 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                             ) : actionMode === 'deposit' ? (
                                 /* Deposit Form */
                                 <div className="space-y-4">
-                                    {/* Token 0 Input (WETH) */}
+                                    {/* USDC Input - uses token1 */}
                                     <div className="p-4 rounded-lg bg-[#10221a]/50 border border-[#234839]">
                                         <div className="flex justify-between items-center mb-2">
                                             <span className="text-sm font-medium text-[#92c9b2]">Deposit Amount</span>
                                             <span className="text-xs text-[#92c9b2]">
-                                                Balance: {userBalances.loading ? '...' : parseFloat(userBalances.token1).toFixed(6)} {userBalances.token1Symbol}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                            <input
-                                                type="number"
-                                                step="0.001"
-                                                min="0"
-                                                placeholder="0.00"
-                                                value={depositAmounts.token0Amount}
-                                                onChange={(e) => setDepositAmounts(prev => ({ ...prev, token0Amount: e.target.value }))}
-                                                className="bg-transparent border-none text-2xl font-bold text-white focus:ring-0 w-full p-0 focus:outline-none"
-                                                disabled={depositStatus !== 'idle'}
-                                            />
-                                            <div className="flex items-center gap-2 bg-[#234839] rounded-lg px-3 py-2">
-                                                <div className="w-6 h-6 rounded-full bg-[#627eea] flex items-center justify-center text-[8px] font-bold">
-                                                    ETH
-                                                </div>
-                                                <span className="font-bold text-sm">WETH</span>
-                                            </div>
-                                        </div>
-                                        <button
-                                            onClick={() => setDepositAmounts(prev => ({ ...prev, token0Amount: userBalances.token1 }))}
-                                            className="text-[#11d483] text-xs mt-2 hover:underline"
-                                            disabled={depositStatus !== 'idle'}
-                                        >
-                                            Max
-                                        </button>
-                                    </div>
-
-                                    {/* Token 1 Input (USDC) */}
-                                    <div className="p-4 rounded-lg bg-[#10221a]/50 border border-[#234839]">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <span className="text-sm font-medium text-[#92c9b2]">Deposit Amount</span>
-                                            <span className="text-xs text-[#92c9b2]">
-                                                Balance: {userBalances.loading ? '...' : parseFloat(userBalances.token0).toFixed(2)} {userBalances.token0Symbol}
+                                                Balance: {userBalances.loading ? '...' : parseFloat(userBalances.token1).toFixed(2)} {userBalances.token1Symbol}
                                             </span>
                                         </div>
                                         <div className="flex items-center gap-4">
@@ -750,7 +959,7 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                                 min="0"
                                                 placeholder="0.00"
                                                 value={depositAmounts.token1Amount}
-                                                onChange={(e) => setDepositAmounts(prev => ({ ...prev, token1Amount: e.target.value }))}
+                                                onChange={(e) => handleToken1AmountChange(e.target.value, true)}
                                                 className="bg-transparent border-none text-2xl font-bold text-white focus:ring-0 w-full p-0 focus:outline-none"
                                                 disabled={depositStatus !== 'idle'}
                                             />
@@ -762,7 +971,42 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                             </div>
                                         </div>
                                         <button
-                                            onClick={() => setDepositAmounts(prev => ({ ...prev, token1Amount: userBalances.token0 }))}
+                                            onClick={() => handleToken1AmountChange(userBalances.token1, true)}
+                                            className="text-[#11d483] text-xs mt-2 hover:underline"
+                                            disabled={depositStatus !== 'idle'}
+                                        >
+                                            Max
+                                        </button>
+                                    </div>
+
+                                    {/* WETH Input - uses token0 */}
+                                    <div className="p-4 rounded-lg bg-[#10221a]/50 border border-[#234839]">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-sm font-medium text-[#92c9b2]">Deposit Amount (auto-calculated)</span>
+                                            <span className="text-xs text-[#92c9b2]">
+                                                Balance: {userBalances.loading ? '...' : parseFloat(userBalances.token0).toFixed(6)} {userBalances.token0Symbol}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <input
+                                                type="number"
+                                                step="0.001"
+                                                min="0"
+                                                placeholder="0.00"
+                                                value={depositAmounts.token0Amount}
+                                                onChange={(e) => handleToken0AmountChange(e.target.value, true)}
+                                                className="bg-transparent border-none text-2xl font-bold text-white focus:ring-0 w-full p-0 focus:outline-none"
+                                                disabled={depositStatus !== 'idle'}
+                                            />
+                                            <div className="flex items-center gap-2 bg-[#234839] rounded-lg px-3 py-2">
+                                                <div className="w-6 h-6 rounded-full bg-[#627eea] flex items-center justify-center text-[8px] font-bold">
+                                                    ETH
+                                                </div>
+                                                <span className="font-bold text-sm">WETH</span>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={() => handleToken0AmountChange(userBalances.token0, true)}
                                             className="text-[#11d483] text-xs mt-2 hover:underline"
                                             disabled={depositStatus !== 'idle'}
                                         >
@@ -814,7 +1058,7 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                         Enter the approximate token amounts you want to withdraw. The actual amounts may vary slightly based on pool state.
                                     </div>
 
-                                    {/* Token 0 Input (WETH) */}
+                                    {/* USDC Input - uses token1 */}
                                     <div className="p-4 rounded-lg bg-[#10221a]/50 border border-[#234839]">
                                         <div className="flex justify-between items-center mb-2">
                                             <span className="text-sm font-medium text-[#92c9b2]">Withdraw Amount</span>
@@ -825,39 +1069,11 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                         <div className="flex items-center gap-4">
                                             <input
                                                 type="number"
-                                                step="0.001"
-                                                min="0"
-                                                placeholder="0.00"
-                                                value={withdrawAmounts.token0Amount}
-                                                onChange={(e) => setWithdrawAmounts(prev => ({ ...prev, token0Amount: e.target.value }))}
-                                                className="bg-transparent border-none text-2xl font-bold text-white focus:ring-0 w-full p-0 focus:outline-none"
-                                                disabled={withdrawStatus !== 'idle'}
-                                            />
-                                            <div className="flex items-center gap-2 bg-[#234839] rounded-lg px-3 py-2">
-                                                <div className="w-6 h-6 rounded-full bg-[#627eea] flex items-center justify-center text-[8px] font-bold">
-                                                    ETH
-                                                </div>
-                                                <span className="font-bold text-sm">WETH</span>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {/* Token 1 Input (USDC) */}
-                                    <div className="p-4 rounded-lg bg-[#10221a]/50 border border-[#234839]">
-                                        <div className="flex justify-between items-center mb-2">
-                                            <span className="text-sm font-medium text-[#92c9b2]">Withdraw Amount</span>
-                                            <span className="text-xs text-[#92c9b2]">
-                                                Pool: {selectedPool.liquidity.token0} {selectedPool.liquidity.token0Symbol}
-                                            </span>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                            <input
-                                                type="number"
                                                 step="0.01"
                                                 min="0"
                                                 placeholder="0.00"
                                                 value={withdrawAmounts.token1Amount}
-                                                onChange={(e) => setWithdrawAmounts(prev => ({ ...prev, token1Amount: e.target.value }))}
+                                                onChange={(e) => handleToken1AmountChange(e.target.value, false)}
                                                 className="bg-transparent border-none text-2xl font-bold text-white focus:ring-0 w-full p-0 focus:outline-none"
                                                 disabled={withdrawStatus !== 'idle'}
                                             />
@@ -870,6 +1086,34 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                         </div>
                                     </div>
 
+                                    {/* WETH Input - uses token0 */}
+                                    <div className="p-4 rounded-lg bg-[#10221a]/50 border border-[#234839]">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-sm font-medium text-[#92c9b2]">Withdraw Amount (auto-calculated)</span>
+                                            <span className="text-xs text-[#92c9b2]">
+                                                Pool: {selectedPool.liquidity.token0} {selectedPool.liquidity.token0Symbol}
+                                            </span>
+                                        </div>
+                                        <div className="flex items-center gap-4">
+                                            <input
+                                                type="number"
+                                                step="0.001"
+                                                min="0"
+                                                placeholder="0.00"
+                                                value={withdrawAmounts.token0Amount}
+                                                onChange={(e) => handleToken0AmountChange(e.target.value, false)}
+                                                className="bg-transparent border-none text-2xl font-bold text-white focus:ring-0 w-full p-0 focus:outline-none"
+                                                disabled={withdrawStatus !== 'idle'}
+                                            />
+                                            <div className="flex items-center gap-2 bg-[#234839] rounded-lg px-3 py-2">
+                                                <div className="w-6 h-6 rounded-full bg-[#627eea] flex items-center justify-center text-[8px] font-bold">
+                                                    ETH
+                                                </div>
+                                                <span className="font-bold text-sm">WETH</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
                                     {/* Error Message */}
                                     {withdrawError && (
                                         <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
@@ -877,27 +1121,49 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                         </div>
                                     )}
 
-                                    {/* Withdraw Button */}
-                                    <button
-                                        onClick={handleWithdraw}
-                                        disabled={withdrawStatus !== 'idle' || !withdrawAmounts.token0Amount || !withdrawAmounts.token1Amount}
-                                        className="btn-primary w-full py-4 text-lg flex items-center justify-center gap-2 bg-red-500 hover:bg-red-600"
-                                        style={{ backgroundColor: withdrawStatus === 'idle' ? '#ef4444' : undefined }}
-                                    >
-                                        {withdrawStatus === 'withdrawing' ? (
-                                            <>
-                                                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
-                                                Removing Liquidity...
-                                            </>
-                                        ) : (
-                                            <>
-                                                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
-                                                </svg>
-                                                Remove Liquidity
-                                            </>
-                                        )}
-                                    </button>
+                                    {/* Withdraw Buttons */}
+                                    <div className="flex gap-3">
+                                        <button
+                                            onClick={handleWithdraw}
+                                            disabled={withdrawStatus !== 'idle' || !withdrawAmounts.token0Amount || !withdrawAmounts.token1Amount}
+                                            className="btn-primary flex-1 py-4 text-lg flex items-center justify-center gap-2"
+                                            style={{ backgroundColor: withdrawStatus === 'idle' ? '#ef4444' : undefined }}
+                                        >
+                                            {withdrawStatus === 'withdrawing' ? (
+                                                <>
+                                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                                    Removing...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
+                                                    </svg>
+                                                    Remove
+                                                </>
+                                            )}
+                                        </button>
+                                        <button
+                                            onClick={handleWithdrawAll}
+                                            disabled={withdrawStatus !== 'idle'}
+                                            className="btn-primary flex-1 py-4 text-lg flex items-center justify-center gap-2"
+                                            style={{ backgroundColor: withdrawStatus === 'idle' ? '#dc2626' : undefined }}
+                                        >
+                                            {withdrawStatus === 'withdrawing' ? (
+                                                <>
+                                                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                                                    Removing All...
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                    </svg>
+                                                    Withdraw All
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
                                 </div>
                             )}
                         </div>

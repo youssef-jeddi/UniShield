@@ -2,15 +2,15 @@ import { ethers } from 'ethers';
 
 export const POOL_MANAGER_ADDRESS = "0xE03A1074c86CFeDd5C142C4F04F1a1536e203543"; // Uniswap v4 PoolManager on Sepolia
 export const POOL_MODIFY_ROUTER_ADDRESS = "0x0c478023803a644c94c4ce1c1e7b9a087e411b0a"; // PoolModifyLiquidityTest on Sepolia
-export const CLEANPOOL_HOOK_ADDRESS = "0x92f39374f0f30393Dc0e996b3B716b644f130880"; // UniShield Hook
+export const CLEANPOOL_HOOK_ADDRESS = "0xe163dA4E5EAF77c9bBe5b5ebd808B0292C034880"; // UniShield Hook
 
 // Token addresses for your pool (Sepolia)
-export const TOKEN_A_ADDRESS = "0x70eb18e2D1C11368ac0F76379d51CEf26D219882"; // cUSD
-export const TOKEN_B_ADDRESS = "0xb5F68459e5Fd08c68F5256D829538a929778b193"; // cETH
+export const TOKEN_A_ADDRESS = "0x7ca9D7C1932442029f53Db9acA0eb43C94279Be8"; // cETH
+export const TOKEN_B_ADDRESS = "0xfff39C5BCEf87623De00630bD9DB7bf5Be981546"; // cUSD
 
 // Pool parameters
-export const POOL_FEE = 3000; // 0.3%
-export const TICK_SPACING = 60;
+export const POOL_FEE = 500; // 0.05%
+export const TICK_SPACING = 10;
 
 // ABIs
 export const ERC20_ABI = [
@@ -46,41 +46,63 @@ export function computePoolId(currency0: string, currency1: string, fee: number,
 const Q96 = BigInt(2) ** BigInt(96);
 
 // Convert tick to sqrtPriceX96
+// Using log/exp for precision with large negative ticks
 export function tickToSqrtPriceX96(tick: number): bigint {
-    const sqrtRatio = Math.sqrt(1.0001 ** tick);
-    return BigInt(Math.floor(sqrtRatio * Number(Q96)));
+    // sqrtPriceX96 = sqrt(1.0001^tick) * 2^96 = 1.0001^(tick/2) * 2^96
+    // Using log: ln(sqrtPriceX96) = (tick/2) * ln(1.0001) + 96 * ln(2)
+    const LOG_1_0001 = Math.log(1.0001); // ≈ 0.00009999500033
+    const LOG_2 = Math.log(2);
+
+    const logSqrtPriceX96 = (tick / 2) * LOG_1_0001 + 96 * LOG_2;
+    const sqrtPriceX96 = Math.exp(logSqrtPriceX96);
+
+    const result = BigInt(Math.floor(sqrtPriceX96));
+    console.log(`tickToSqrtPriceX96(${tick}): logResult=${logSqrtPriceX96.toFixed(4)}, sqrtPriceX96=${result}`);
+    return result;
 }
 
 // Calculate liquidity from token amounts
-// This is a simplified calculation assuming we're adding liquidity within range
+// Based on Uniswap v3 math:
+// L from amount0: L = amount0 * sqrtPriceX96 * sqrtRatioB / (Q96 * (sqrtRatioB - sqrtPriceX96))
+// L from amount1: L = amount1 * Q96 / (sqrtPriceX96 - sqrtRatioA)
 export function calculateLiquidityFromAmounts(
     sqrtPriceX96: bigint,
     tickLower: number,
     tickUpper: number,
-    amount0: bigint,  // USDC amount (smaller token address)
-    amount1: bigint   // WETH amount (larger token address)
+    amount0: bigint,  // token0 amount (smaller token address)
+    amount1: bigint   // token1 amount (larger token address)
 ): bigint {
     const sqrtRatioA = tickToSqrtPriceX96(tickLower);
     const sqrtRatioB = tickToSqrtPriceX96(tickUpper);
 
+    console.log("calculateLiquidityFromAmounts:");
+    console.log("  sqrtPriceX96:", sqrtPriceX96.toString());
+    console.log("  sqrtRatioA:", sqrtRatioA.toString());
+    console.log("  sqrtRatioB:", sqrtRatioB.toString());
+
     // If current price is below range, use only amount0
     if (sqrtPriceX96 <= sqrtRatioA) {
-        // liquidity = amount0 * sqrtRatioA * sqrtRatioB / (sqrtRatioB - sqrtRatioA)
+        console.log("  Price below range, using amount0 only");
+        // L = amount0 * sqrtRatioA * sqrtRatioB / (Q96 * (sqrtRatioB - sqrtRatioA))
         const numerator = amount0 * sqrtRatioA * sqrtRatioB;
-        const denominator = (sqrtRatioB - sqrtRatioA) * Q96;
+        const denominator = Q96 * (sqrtRatioB - sqrtRatioA);
         return numerator / denominator;
     }
     // If current price is above range, use only amount1
     else if (sqrtPriceX96 >= sqrtRatioB) {
-        // liquidity = amount1 * Q96 / (sqrtRatioB - sqrtRatioA)
+        console.log("  Price above range, using amount1 only");
+        // L = amount1 * Q96 / (sqrtRatioB - sqrtRatioA)
         return (amount1 * Q96) / (sqrtRatioB - sqrtRatioA);
     }
     // Current price is within range - use minimum of both calculations
     else {
-        // liquidity0 = amount0 * sqrtPrice * sqrtRatioB / ((sqrtRatioB - sqrtPrice) * Q96)
-        const liquidity0 = (amount0 * sqrtPriceX96 * sqrtRatioB) / ((sqrtRatioB - sqrtPriceX96) * Q96);
-        // liquidity1 = amount1 * Q96 / (sqrtPrice - sqrtRatioA)
+        console.log("  Price in range, using min of both");
+        // L from amount0: L = amount0 * sqrtPriceX96 * sqrtRatioB / (Q96 * (sqrtRatioB - sqrtPriceX96))
+        const liquidity0 = (amount0 * sqrtPriceX96 * sqrtRatioB) / (Q96 * (sqrtRatioB - sqrtPriceX96));
+        // L from amount1: L = amount1 * Q96 / (sqrtPriceX96 - sqrtRatioA)
         const liquidity1 = (amount1 * Q96) / (sqrtPriceX96 - sqrtRatioA);
+        console.log("  liquidity0:", liquidity0.toString());
+        console.log("  liquidity1:", liquidity1.toString());
         // Return the minimum to ensure we don't request more than provided
         return liquidity0 < liquidity1 ? liquidity0 : liquidity1;
     }
@@ -95,4 +117,86 @@ export function getSortedTokens(): { currency0: string; currency1: string } {
     } else {
         return { currency0: TOKEN_B_ADDRESS, currency1: TOKEN_A_ADDRESS };
     }
+}
+
+// Calculate required amount1 given amount0 for a position in range
+// Based on Uniswap v3 math:
+// x = L * Q96 * (sqrtRatioB - sqrtPriceX96) / (sqrtPriceX96 * sqrtRatioB)
+// y = L * (sqrtPriceX96 - sqrtRatioA) / Q96
+// Therefore: y = x * sqrtPriceX96 * sqrtRatioB * (sqrtPriceX96 - sqrtRatioA) / (Q96^2 * (sqrtRatioB - sqrtPriceX96))
+export function calculateAmount1FromAmount0(
+    sqrtPriceX96: bigint,
+    tickLower: number,
+    tickUpper: number,
+    amount0: bigint
+): bigint {
+    const sqrtRatioA = tickToSqrtPriceX96(tickLower);
+    const sqrtRatioB = tickToSqrtPriceX96(tickUpper);
+
+    console.log("calculateAmount1FromAmount0:");
+    console.log("  sqrtPriceX96:", sqrtPriceX96.toString());
+    console.log("  sqrtRatioA (tickLower):", sqrtRatioA.toString());
+    console.log("  sqrtRatioB (tickUpper):", sqrtRatioB.toString());
+    console.log("  Price in range?", sqrtPriceX96 > sqrtRatioA && sqrtPriceX96 < sqrtRatioB);
+
+    // If price is below range, only token0 is needed
+    if (sqrtPriceX96 <= sqrtRatioA) {
+        console.log("  Price is BELOW range, returning 0");
+        return BigInt(0);
+    }
+    // If price is above range, only token1 is needed (can't calculate from amount0)
+    if (sqrtPriceX96 >= sqrtRatioB) {
+        console.log("  Price is ABOVE range, returning 0");
+        return BigInt(0);
+    }
+
+    // Price is in range - calculate amount1 from amount0
+    // amount1 = amount0 * sqrtPriceX96 * sqrtRatioB * (sqrtPriceX96 - sqrtRatioA) / (Q96^2 * (sqrtRatioB - sqrtPriceX96))
+    const numerator = amount0 * sqrtPriceX96 * sqrtRatioB * (sqrtPriceX96 - sqrtRatioA);
+    const denominator = Q96 * Q96 * (sqrtRatioB - sqrtPriceX96);
+
+    const result = numerator / denominator;
+    console.log("  Calculated amount1:", result.toString());
+    return result;
+}
+
+// Calculate required amount0 given amount1 for a position in range
+// Based on Uniswap v3 math:
+// x = L * Q96 * (sqrtRatioB - sqrtPriceX96) / (sqrtPriceX96 * sqrtRatioB)
+// y = L * (sqrtPriceX96 - sqrtRatioA) / Q96
+// Therefore: x = y * Q96^2 * (sqrtRatioB - sqrtPriceX96) / ((sqrtPriceX96 - sqrtRatioA) * sqrtPriceX96 * sqrtRatioB)
+export function calculateAmount0FromAmount1(
+    sqrtPriceX96: bigint,
+    tickLower: number,
+    tickUpper: number,
+    amount1: bigint
+): bigint {
+    const sqrtRatioA = tickToSqrtPriceX96(tickLower);
+    const sqrtRatioB = tickToSqrtPriceX96(tickUpper);
+
+    console.log("calculateAmount0FromAmount1:");
+    console.log("  sqrtPriceX96:", sqrtPriceX96.toString());
+    console.log("  sqrtRatioA (tickLower):", sqrtRatioA.toString());
+    console.log("  sqrtRatioB (tickUpper):", sqrtRatioB.toString());
+    console.log("  Price in range?", sqrtPriceX96 > sqrtRatioA && sqrtPriceX96 < sqrtRatioB);
+
+    // If price is below range, only token0 is needed (can't calculate from amount1)
+    if (sqrtPriceX96 <= sqrtRatioA) {
+        console.log("  Price is BELOW range, returning 0");
+        return BigInt(0);
+    }
+    // If price is above range, only token1 is needed
+    if (sqrtPriceX96 >= sqrtRatioB) {
+        console.log("  Price is ABOVE range, returning 0");
+        return BigInt(0);
+    }
+
+    // Price is in range - calculate amount0 from amount1
+    // amount0 = amount1 * Q96^2 * (sqrtRatioB - sqrtPriceX96) / ((sqrtPriceX96 - sqrtRatioA) * sqrtPriceX96 * sqrtRatioB)
+    const numerator = amount1 * Q96 * Q96 * (sqrtRatioB - sqrtPriceX96);
+    const denominator = (sqrtPriceX96 - sqrtRatioA) * sqrtPriceX96 * sqrtRatioB;
+
+    const result = numerator / denominator;
+    console.log("  Calculated amount0:", result.toString());
+    return result;
 }
