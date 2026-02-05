@@ -31,6 +31,22 @@ UniShield solves this with a **privacy-first compliance layer**:
 
 **Result**: Users get verified once, trade freely across all UniShield pools, and their documents remain private.
 
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- Foundry [Only needed if you want to redeploy contracts]
+
+### Run the project
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
 ---
 
 ## Architecture
@@ -90,23 +106,6 @@ The TEE application (`UniShield/src/app.py`) performs the KYC
 | cETH Token | `0x7ca9D7C1932442029f53Db9acA0eb43C94279Be8` |
 | cUSD Token | `0xfff39C5BCEf87623De00630bD9DB7bf5Be981546` |
 | iApp (Arbitrum Sepolia) | `0xe4651C6F9354debbfFF077E1E64b5A6cA00B615D` |
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 18+
-- Foundry [Only needed if you want to redeploy contracts]
-
-### Run the project
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
 
 ---
 
