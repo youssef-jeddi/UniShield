@@ -39,6 +39,16 @@ UniShield solves this with a **privacy-first compliance layer**:
 - Node.js 18+
 - Foundry [Only needed if you want to redeploy contracts]
 
+### Environment Variables
+
+Create a `.env` file in the `frontend/` directory:
+
+```bash
+VITE_PRIVY_APP_ID=your-privy-app-id
+```
+
+Get your Privy App ID from the [Privy Dashboard](https://dashboard.privy.io/).
+
 ### Run the project
 
 ```bash
