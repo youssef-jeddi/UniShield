@@ -11,8 +11,6 @@ import { supportedChains, SEPOLIA_CHAIN_ID, ARBITRUM_SEPOLIA_CHAIN_ID } from "./
 import { normalizeChainId } from "./utils/normalizeChainId";
 import KYCVerification from "./components/KYCVerification";
 import PoolsPage from "./components/PoolsPage";
-import CompliancePage from "./components/CompliancePage";
-import GovernancePage from "./components/GovernancePage";
 import Header from "./components/Header";
 import {
   CLEANPOOL_HOOK_ADDRESS,
@@ -99,7 +97,7 @@ export default function App() {
   const [kycExpiryDate, setKycExpiryDate] = useState<Date | null>(null);
 
   // Navigation state
-  type PageType = 'dashboard' | 'pools' | 'compliance' | 'governance';
+  type PageType = 'dashboard' | 'pools';
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
 
   // iApp address (replace with your deployed iApp address)
@@ -475,10 +473,6 @@ export default function App() {
               wallet={wallet}
               onNavigateToKYC={() => setCurrentPage('dashboard')}
             />
-          ) : currentPage === 'compliance' ? (
-            <CompliancePage />
-          ) : currentPage === 'governance' ? (
-            <GovernancePage />
           ) : (
             <>
               {/* Dashboard / KYC Page */}
@@ -546,17 +540,13 @@ export default function App() {
       </main>
 
       {/* Footer */}
-      <footer className="px-6 lg:px-10 py-6 border-t border-[#234839] flex justify-between items-center text-xs text-[#92c9b2]">
+      <footer className="px-6 lg:px-10 py-6 border-t border-[#234839] flex justify-center items-center text-xs text-[#92c9b2]">
         <div className="flex items-center gap-4">
           <span>© 2024 UniShield Institutional</span>
           <span className="w-1 h-1 bg-[#234839] rounded-full"></span>
           <a className="hover:text-[#11d483] transition-colors" href="#">Privacy Policy</a>
           <span className="w-1 h-1 bg-[#234839] rounded-full"></span>
           <a className="hover:text-[#11d483] transition-colors" href="#">Terms of Service</a>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="w-2 h-2 bg-[#11d483] rounded-full glow-pulse"></span>
-          <span className="text-white font-medium">Sepolia Testnet</span>
         </div>
       </footer>
     </div>
