@@ -86,8 +86,8 @@ export default function App() {
   const [verificationStatus, setVerificationStatus] =
     useState<VerificationStatus>("IDLE");
   const [statusMessage, setStatusMessage] = useState("");
-  const [protectedDataAddress, setProtectedDataAddress] = useState<string>("");
-  const [attestation, setAttestation] = useState<AttestationResult | null>(
+  const [_protectedDataAddress, setProtectedDataAddress] = useState<string>("");
+  const [_attestation, setAttestation] = useState<AttestationResult | null>(
     null
   );
   const [error, setError] = useState<string>("");
