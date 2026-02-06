@@ -15,6 +15,8 @@ import {
     calculateAmount0FromAmount1,
     calculateAmount1FromAmount0,
 } from '../config/contract';
+import { SEPOLIA_CHAIN_ID } from '../config/privyConfig';
+import { normalizeChainId } from '../utils/normalizeChainId';
 
 // Hook ABI for KYC check
 const HOOK_ABI = [
@@ -342,6 +344,21 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
         }
     };
 
+    const ensureSepoliaNetwork = async (): Promise<boolean> => {
+        if (!wallet) return false;
+        const currentChainId = normalizeChainId(wallet.chainId);
+        if (currentChainId !== SEPOLIA_CHAIN_ID) {
+            try {
+                await wallet.switchChain(SEPOLIA_CHAIN_ID);
+                return true;
+            } catch (error) {
+                console.error('Failed to switch to Sepolia:', error);
+                return false;
+            }
+        }
+        return true;
+    };
+
     const handleDeposit = async () => {
         if (!wallet || !selectedPool || !address) return;
 
@@ -350,6 +367,12 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
 
         if (isNaN(token0Amount) || isNaN(token1Amount) || token0Amount <= 0 || token1Amount <= 0) {
             setDepositError('Please enter valid deposit amounts');
+            return;
+        }
+
+        const onSepolia = await ensureSepoliaNetwork();
+        if (!onSepolia) {
+            setDepositError('Please switch to Sepolia network to deposit');
             return;
         }
 
@@ -483,6 +506,12 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
     const handleWithdrawAll = async () => {
         if (!wallet || !selectedPool || !address) return;
 
+        const onSepolia = await ensureSepoliaNetwork();
+        if (!onSepolia) {
+            setWithdrawError('Please switch to Sepolia network to withdraw');
+            return;
+        }
+
         setWithdrawStatus('withdrawing');
         setWithdrawError('');
 
@@ -577,6 +606,12 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
 
         if (isNaN(token0Amount) || isNaN(token1Amount) || token0Amount <= 0 || token1Amount <= 0) {
             setWithdrawError('Please enter valid withdrawal amounts');
+            return;
+        }
+
+        const onSepolia = await ensureSepoliaNetwork();
+        if (!onSepolia) {
+            setWithdrawError('Please switch to Sepolia network to withdraw');
             return;
         }
 
@@ -888,11 +923,10 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                             <div className="flex gap-2 mb-6 p-1 bg-[#10221a] rounded-lg">
                                 <button
                                     onClick={() => setActionMode('deposit')}
-                                    className={`flex-1 py-2.5 px-4 rounded-md font-bold text-sm transition-all ${
-                                        actionMode === 'deposit'
-                                            ? 'bg-[#11d483] text-black'
-                                            : 'text-[#92c9b2] hover:text-white'
-                                    }`}
+                                    className={`flex-1 py-2.5 px-4 rounded-md font-bold text-sm transition-all ${actionMode === 'deposit'
+                                        ? 'bg-[#11d483] text-black'
+                                        : 'text-[#92c9b2] hover:text-white'
+                                        }`}
                                 >
                                     <svg className="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
@@ -901,11 +935,10 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                 </button>
                                 <button
                                     onClick={() => setActionMode('withdraw')}
-                                    className={`flex-1 py-2.5 px-4 rounded-md font-bold text-sm transition-all ${
-                                        actionMode === 'withdraw'
-                                            ? 'bg-[#11d483] text-black'
-                                            : 'text-[#92c9b2] hover:text-white'
-                                    }`}
+                                    className={`flex-1 py-2.5 px-4 rounded-md font-bold text-sm transition-all ${actionMode === 'withdraw'
+                                        ? 'bg-[#11d483] text-black'
+                                        : 'text-[#92c9b2] hover:text-white'
+                                        }`}
                                 >
                                     <svg className="w-4 h-4 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 12H4" />
@@ -1053,7 +1086,7 @@ const PoolsPage: React.FC<PoolsPageProps> = ({ address, isConnected, wallet, onN
                                     {/* Info Banner */}
                                     <div className="p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-sm">
                                         <svg className="w-4 h-4 inline mr-2" fill="currentColor" viewBox="0 0 24 24">
-                                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z"/>
+                                            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-2h2v2zm0-4h-2V7h2v6z" />
                                         </svg>
                                         Enter the approximate token amounts you want to withdraw. The actual amounts may vary slightly based on pool state.
                                     </div>

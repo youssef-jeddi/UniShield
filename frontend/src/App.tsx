@@ -58,13 +58,22 @@ export interface AttestationResult {
 }
 
 export default function App() {
-  const { login: privyLogin, logout: privyLogout, authenticated } = usePrivy();
+  const { login: privyLogin, logout: privyLogout, authenticated, ready, connectWallet } = usePrivy();
   const { wallets } = useWallets();
 
   const wallet =
     wallets.find((w) => w.walletClientType === "privy") || wallets[0];
   const address = wallet?.address;
   const isConnected = authenticated && !!wallet;
+
+  const handleLogin = () => {
+    if (authenticated) {
+      // Already logged in but no wallet - prompt to connect wallet
+      connectWallet();
+    } else {
+      privyLogin();
+    }
+  };
 
   const [chainId, setChainId] = useState<number>(
     normalizeChainId(wallet?.chainId)
@@ -106,7 +115,6 @@ export default function App() {
 
   const networks = supportedChains;
 
-  const handleLogin = () => privyLogin();
   const handleLogout = async () => {
     try {
       await privyLogout();
@@ -248,7 +256,7 @@ export default function App() {
 
   // Main verification flow
   const startVerification = async () => {
-    if (!dataProtectorCore || !address || !kycData.file || !wallet) {
+    if (!address || !kycData.file || !wallet) {
       setError("Missing required data");
       return;
     }
@@ -264,11 +272,23 @@ export default function App() {
         setStatusMessage("Switching to Arbitrum Sepolia for iExec...");
         try {
           await wallet.switchChain(ARBITRUM_SEPOLIA_CHAIN_ID);
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          // Wait for chain switch and DataProtector to initialize
+          await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (switchError: any) {
           console.error("Failed to switch to Arbitrum Sepolia:", switchError);
           throw new Error("Please switch to Arbitrum Sepolia network for KYC verification");
         }
+      }
+
+      // Initialize DataProtector if not already available
+      let dpCore = dataProtectorCore;
+      if (!dpCore) {
+        const provider = await wallet.getEthereumProvider();
+        const dp = new IExecDataProtector(provider, {
+          allowExperimentalNetworks: true,
+        });
+        dpCore = dp.core;
+        setDataProtectorCore(dpCore);
       }
 
       // Step 1: Convert file to ArrayBuffer
@@ -279,7 +299,7 @@ export default function App() {
       setVerificationStatus("ENCRYPTING");
       setStatusMessage("Encrypting document with iExec DataProtector...");
 
-      const protectedData = await dataProtectorCore.protectData({
+      const protectedData = await dpCore.protectData({
         name: `KYC-${address.slice(0, 8)}`,
         data: {
           document_data: new Uint8Array(fileBuffer),
@@ -295,7 +315,7 @@ export default function App() {
       setVerificationStatus("GRANTING_ACCESS");
       setStatusMessage("Granting access to verification enclave...");
 
-      await dataProtectorCore.grantAccess({
+      await dpCore.grantAccess({
         protectedData: protectedData.address,
         authorizedApp: IAPP_ADDRESS,
         authorizedUser: address,
@@ -311,7 +331,7 @@ export default function App() {
       console.log(address)
 
       // iExec task execution
-      const result = await dataProtectorCore.processProtectedData({
+      const result = await dpCore.processProtectedData({
         protectedData: protectedData.address,
         app: IAPP_ADDRESS,
         args: address,
@@ -345,7 +365,7 @@ export default function App() {
 
       // Get the actual result from the completed task
       // The result is a ZIP file, we need to extract result.json
-      const completedTaskResult = await dataProtectorCore.getResultFromCompletedTask({
+      const completedTaskResult = await dpCore.getResultFromCompletedTask({
         taskId: result.taskId,
         path: "result.json",  // Path to extract from the ZIP
         onStatusUpdate: ({ title, isDone }) => {
