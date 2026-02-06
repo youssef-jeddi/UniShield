@@ -58,7 +58,7 @@ export interface AttestationResult {
 }
 
 export default function App() {
-  const { login: privyLogin, logout: privyLogout, authenticated, ready, connectWallet } = usePrivy();
+  const { login: privyLogin, logout: privyLogout, authenticated, connectWallet } = usePrivy();
   const { wallets } = useWallets();
 
   const wallet =
