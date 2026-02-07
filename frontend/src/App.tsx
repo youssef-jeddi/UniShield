@@ -562,7 +562,7 @@ export default function App() {
       {/* Footer */}
       <footer className="px-6 lg:px-10 py-6 border-t border-[#234839] flex justify-center items-center text-xs text-[#92c9b2]">
         <div className="flex items-center gap-4">
-          <span>© 2024 UniShield Institutional</span>
+          <span>© 2026 UniShield Institutional</span>
           <span className="w-1 h-1 bg-[#234839] rounded-full"></span>
           <a className="hover:text-[#11d483] transition-colors" href="#">Privacy Policy</a>
           <span className="w-1 h-1 bg-[#234839] rounded-full"></span>
