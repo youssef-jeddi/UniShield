@@ -1,6 +1,6 @@
 import React from "react";
 
-type PageType = 'dashboard' | 'pools';
+type PageType = 'dashboard' | 'pools' | 'faucet';
 
 interface HeaderProps {
     isConnected: boolean;
@@ -34,6 +34,7 @@ const Header: React.FC<HeaderProps> = ({
     const navItems: { key: PageType; label: string }[] = [
         { key: 'dashboard', label: 'Dashboard' },
         { key: 'pools', label: 'Pools' },
+        { key: 'faucet', label: 'Faucet' },
     ];
 
     return (

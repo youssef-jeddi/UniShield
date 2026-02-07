@@ -11,6 +11,7 @@ import { supportedChains, SEPOLIA_CHAIN_ID, ARBITRUM_SEPOLIA_CHAIN_ID } from "./
 import { normalizeChainId } from "./utils/normalizeChainId";
 import KYCVerification from "./components/KYCVerification";
 import PoolsPage from "./components/PoolsPage";
+import FaucetPage from "./components/FaucetPage";
 import Header from "./components/Header";
 import {
   CLEANPOOL_HOOK_ADDRESS,
@@ -106,7 +107,7 @@ export default function App() {
   const [kycExpiryDate, setKycExpiryDate] = useState<Date | null>(null);
 
   // Navigation state
-  type PageType = 'dashboard' | 'pools';
+  type PageType = 'dashboard' | 'pools' | 'faucet';
   const [currentPage, setCurrentPage] = useState<PageType>('dashboard');
 
   // iApp address (replace with your deployed iApp address)
@@ -492,6 +493,13 @@ export default function App() {
               isConnected={isConnected}
               wallet={wallet}
               onNavigateToKYC={() => setCurrentPage('dashboard')}
+            />
+          ) : currentPage === 'faucet' ? (
+            <FaucetPage
+              address={address}
+              isConnected={isConnected}
+              wallet={wallet}
+              onLogin={handleLogin}
             />
           ) : (
             <>
